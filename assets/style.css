@@ -1,0 +1,326 @@
+/* Tangles – GTK4 custom theme */
+
+/* Floating brain window — transparent, no chrome */
+window.brain-window {
+    background-color: transparent;
+}
+
+/* Brain icon container — invisible, just holds the icon */
+.brain-container {
+    padding: 0;
+    background-color: transparent;
+    background: none;
+}
+
+/* Note windows */
+.note-window {
+    background-color: alpha(@theme_bg_color, 0.94);
+}
+
+.note-title-entry {
+    font-size: 15px;
+    font-weight: 600;
+    border-radius: 6px;
+    padding: 6px 10px;
+    background-color: alpha(@theme_bg_color, 0.7);
+    border: 1px solid alpha(@theme_fg_color, 0.12);
+}
+
+.note-title-entry:focus {
+    border-color: #b388ff;
+    box-shadow: 0 0 0 2px alpha(#b388ff, 0.25);
+}
+
+/* Pin button */
+.pin-button {
+    border-radius: 50%;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0;
+    background-color: alpha(@theme_bg_color, 0.5);
+    border: 1px solid alpha(@theme_fg_color, 0.1);
+    transition: all 150ms ease;
+}
+
+.pin-button:hover {
+    background-color: alpha(#b388ff, 0.2);
+}
+
+.pin-button.pinned {
+    background-color: alpha(#b388ff, 0.3);
+    border-color: #b388ff;
+    color: #b388ff;
+}
+
+/* Palette button */
+.palette-button {
+    border-radius: 50%;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0;
+    background-color: alpha(@theme_bg_color, 0.5);
+    border: 1px solid alpha(@theme_fg_color, 0.1);
+    transition: all 150ms ease;
+}
+
+.palette-button:hover {
+    background-color: alpha(#b388ff, 0.2);
+}
+
+/* Save / Close buttons */
+.save-button {
+    background-color: #7c4dff;
+    color: white;
+    border-radius: 6px;
+    padding: 6px 18px;
+    font-weight: 600;
+    border: none;
+}
+
+.save-button:hover {
+    background-color: #651fff;
+}
+
+.close-button {
+    border-radius: 6px;
+    padding: 6px 18px;
+}
+
+/* Rich editor toolbar (FlowBox) */
+.rich-toolbar {
+    padding: 4px;
+    border-bottom: 1px solid alpha(@theme_fg_color, 0.08);
+}
+
+.rich-toolbar > flowboxchild {
+    padding: 1px;
+}
+
+.rich-toolbar button {
+    min-width: 28px;
+    min-height: 28px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    background-color: alpha(@theme_bg_color, 0.5);
+    border: 1px solid alpha(@theme_fg_color, 0.08);
+}
+
+.rich-toolbar button:hover {
+    background-color: alpha(#b388ff, 0.15);
+}
+
+/* Color swatch buttons */
+.color-swatch-btn {
+    min-width: 32px;
+    min-height: 32px;
+    padding: 2px;
+    border-radius: 4px;
+    background: none;
+    border: 1px solid transparent;
+}
+
+.color-swatch-btn:hover {
+    border-color: alpha(@theme_fg_color, 0.3);
+}
+
+/* Color picker popover */
+.color-picker-popover {
+    min-width: 200px;
+}
+
+/* Foreground color button styling */
+.fg-color-btn {
+    font-weight: 700;
+    text-decoration: underline;
+    text-decoration-color: #ef5350;
+}
+
+/* Background color button styling */
+.bg-color-btn {
+    font-weight: 700;
+    background-color: alpha(#ffee58, 0.3);
+}
+
+/* Rich text view */
+.rich-editor {
+    font-family: "Inter", "Cantarell", "Noto Sans", sans-serif;
+    font-size: 14px;
+    padding: 8px;
+    border-radius: 6px;
+    background-color: alpha(@theme_bg_color, 0.6);
+}
+
+/* Note list dialog */
+.note-list-dialog {
+    background-color: alpha(@theme_bg_color, 0.95);
+}
+
+.note-list-search {
+    border-radius: 8px;
+    padding: 8px 12px;
+    background-color: alpha(@theme_bg_color, 0.7);
+    border: 1px solid alpha(@theme_fg_color, 0.1);
+}
+
+.note-list-search:focus {
+    border-color: #b388ff;
+    box-shadow: 0 0 0 2px alpha(#b388ff, 0.2);
+}
+
+/* Note list rows */
+.note-row {
+    padding: 8px 12px;
+    border-radius: 8px;
+    transition: background-color 150ms ease;
+}
+
+.note-row:hover {
+    background-color: alpha(#b388ff, 0.08);
+}
+
+.note-row-title {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.note-row-preview {
+    font-size: 12px;
+    color: alpha(@theme_fg_color, 0.55);
+}
+
+.note-row-timestamp {
+    font-size: 10px;
+    color: alpha(@theme_fg_color, 0.35);
+}
+
+/* Delete button in note list */
+.note-delete-button {
+    border-radius: 50%;
+    min-width: 24px;
+    min-height: 24px;
+    padding: 0;
+    background-color: transparent;
+    color: alpha(@theme_fg_color, 0.3);
+    border: none;
+    transition: all 150ms ease;
+}
+
+.note-delete-button:hover {
+    background-color: alpha(#ef5350, 0.15);
+    color: #ef5350;
+}
+
+/* Popover menu */
+popover.menu contents {
+    padding: 4px;
+    border-radius: 10px;
+}
+
+popover.menu modelbutton {
+    border-radius: 6px;
+    padding: 6px 12px;
+}
+
+popover.menu modelbutton:hover {
+    background-color: alpha(#b388ff, 0.12);
+}
+
+/* Content frame */
+.content-frame {
+    border-radius: 8px;
+    border: 1px solid alpha(@theme_fg_color, 0.08);
+}
+
+/* Emoji button */
+.emoji-btn {
+    min-width: 32px;
+    min-height: 32px;
+    padding: 2px;
+    border-radius: 4px;
+    font-size: 18px;
+    background: none;
+    border: none;
+}
+
+.emoji-btn:hover {
+    background-color: alpha(#b388ff, 0.15);
+}
+
+/* Image picker thumbnails */
+.thumbnail-btn {
+    padding: 6px;
+    border-radius: 8px;
+    background: none;
+    border: 1px solid transparent;
+    transition: all 150ms ease;
+}
+
+.thumbnail-btn:hover {
+    background-color: alpha(#b388ff, 0.12);
+    border-color: alpha(#b388ff, 0.3);
+}
+
+.thumbnail-frame {
+    border-radius: 6px;
+    border: 1px solid alpha(@theme_fg_color, 0.1);
+}
+
+.preview-image-frame {
+    border-radius: 6px;
+    border: 1px solid alpha(@theme_fg_color, 0.08);
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+
+/* Image drag-resize handle */
+.image-resize-handle {
+    background: none;
+    opacity: 0.6;
+    transition: opacity 150ms ease;
+}
+
+.image-resize-handle:hover {
+    opacity: 1.0;
+}
+
+/* Chromeless (undecorated) note windows */
+.note-window.chromeless {
+    border: 1px solid alpha(@theme_fg_color, 0.15);
+    border-radius: 8px;
+}
+
+/* Backlinks pane */
+.backlinks-pane {
+    padding: 4px 8px;
+    border-top: 1px solid alpha(@theme_fg_color, 0.08);
+    min-height: 28px;
+}
+
+.backlinks-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: alpha(@theme_fg_color, 0.45);
+}
+
+.backlink-btn {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 12px;
+    background-color: alpha(#b388ff, 0.12);
+    color: #b388ff;
+    border: 1px solid alpha(#b388ff, 0.25);
+    min-height: 22px;
+}
+
+.backlink-btn:hover {
+    background-color: alpha(#b388ff, 0.25);
+    border-color: #b388ff;
+}
+
+/* Tangle jump flash highlight */
+.tangle-flash {
+    border: 3px solid #b388ff;
+    border-radius: 8px;
+    box-shadow: 0 0 12px alpha(#b388ff, 0.5);
+}

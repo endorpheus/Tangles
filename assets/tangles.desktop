@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Tangles
+Comment=A note-taking app for tangled thoughts
+Exec=tangles
+Icon=tangles
+Terminal=false
+Type=Application
+Categories=Utility;Office;
+StartupWMClass=tangles
