@@ -1,4 +1,4 @@
-/* Tangles – GTK4 custom theme */
+/* Tangles – GTK4 dark theme */
 
 /* Floating brain window — transparent, no chrome */
 window.brain-window {
@@ -12,9 +12,14 @@ window.brain-window {
     background: none;
 }
 
-/* Note windows */
+/* Note windows — dark defaults */
 .note-window {
-    background-color: alpha(@theme_bg_color, 0.94);
+    background-color: #1a1a2e;
+    color: #e0e0e0;
+}
+
+.note-window box {
+    background-color: transparent;
 }
 
 .note-title-entry {
@@ -22,8 +27,9 @@ window.brain-window {
     font-weight: 600;
     border-radius: 6px;
     padding: 6px 10px;
-    background-color: alpha(@theme_bg_color, 0.7);
-    border: 1px solid alpha(@theme_fg_color, 0.12);
+    background-color: alpha(#1a1a2e, 0.7);
+    border: 1px solid alpha(#e0e0e0, 0.12);
+    color: #e0e0e0;
 }
 
 .note-title-entry:focus {
@@ -37,8 +43,9 @@ window.brain-window {
     min-width: 32px;
     min-height: 32px;
     padding: 0;
-    background-color: alpha(@theme_bg_color, 0.5);
-    border: 1px solid alpha(@theme_fg_color, 0.1);
+    background-color: alpha(#e0e0e0, 0.08);
+    border: 1px solid alpha(#e0e0e0, 0.1);
+    color: #e0e0e0;
     transition: all 150ms ease;
 }
 
@@ -58,12 +65,58 @@ window.brain-window {
     min-width: 32px;
     min-height: 32px;
     padding: 0;
-    background-color: alpha(@theme_bg_color, 0.5);
-    border: 1px solid alpha(@theme_fg_color, 0.1);
+    background-color: alpha(#e0e0e0, 0.08);
+    border: 1px solid alpha(#e0e0e0, 0.1);
+    color: #e0e0e0;
     transition: all 150ms ease;
 }
 
 .palette-button:hover {
+    background-color: alpha(#b388ff, 0.2);
+}
+
+/* Star button */
+.star-button {
+    border-radius: 50%;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0;
+    background-color: alpha(#e0e0e0, 0.08);
+    border: 1px solid alpha(#e0e0e0, 0.1);
+    font-size: 16px;
+    transition: all 150ms ease;
+}
+
+.star-button:hover {
+    background-color: alpha(#b388ff, 0.2);
+}
+
+.star-color-btn {
+    min-width: 28px;
+    min-height: 28px;
+    padding: 2px;
+    background: none;
+    border: none;
+    font-size: 18px;
+}
+
+.star-color-btn:hover {
+    background-color: alpha(#b388ff, 0.15);
+}
+
+/* Chromeless toggle */
+.chromeless-button {
+    border-radius: 50%;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0;
+    background-color: alpha(#e0e0e0, 0.08);
+    border: 1px solid alpha(#e0e0e0, 0.1);
+    color: #e0e0e0;
+    transition: all 150ms ease;
+}
+
+.chromeless-button:hover {
     background-color: alpha(#b388ff, 0.2);
 }
 
@@ -84,12 +137,31 @@ window.brain-window {
 .close-button {
     border-radius: 6px;
     padding: 6px 18px;
+    background-color: alpha(#e0e0e0, 0.08);
+    color: #e0e0e0;
+}
+
+/* Toolbar hamburger toggle */
+.toolbar-toggle-btn {
+    min-width: 28px;
+    min-height: 28px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 14px;
+    background-color: alpha(#e0e0e0, 0.06);
+    border: 1px solid alpha(#e0e0e0, 0.06);
+    color: #e0e0e0;
+}
+
+.toolbar-toggle-btn:hover {
+    background-color: alpha(#b388ff, 0.15);
 }
 
 /* Rich editor toolbar (FlowBox) */
 .rich-toolbar {
     padding: 4px;
-    border-bottom: 1px solid alpha(@theme_fg_color, 0.08);
+    border-bottom: 1px solid alpha(#e0e0e0, 0.08);
+    background-color: alpha(#1a1a2e, 0.85);
 }
 
 .rich-toolbar > flowboxchild {
@@ -102,8 +174,9 @@ window.brain-window {
     padding: 2px 6px;
     border-radius: 4px;
     font-size: 12px;
-    background-color: alpha(@theme_bg_color, 0.5);
-    border: 1px solid alpha(@theme_fg_color, 0.08);
+    background-color: alpha(#e0e0e0, 0.08);
+    border: 1px solid alpha(#e0e0e0, 0.06);
+    color: #e0e0e0;
 }
 
 .rich-toolbar button:hover {
@@ -121,7 +194,7 @@ window.brain-window {
 }
 
 .color-swatch-btn:hover {
-    border-color: alpha(@theme_fg_color, 0.3);
+    border-color: alpha(#e0e0e0, 0.3);
 }
 
 /* Color picker popover */
@@ -148,19 +221,22 @@ window.brain-window {
     font-size: 14px;
     padding: 8px;
     border-radius: 6px;
-    background-color: alpha(@theme_bg_color, 0.6);
+    background-color: alpha(#e0e0e0, 0.04);
+    color: #e0e0e0;
 }
 
 /* Note list dialog */
 .note-list-dialog {
-    background-color: alpha(@theme_bg_color, 0.95);
+    background-color: #1a1a2e;
+    color: #e0e0e0;
 }
 
 .note-list-search {
     border-radius: 8px;
     padding: 8px 12px;
-    background-color: alpha(@theme_bg_color, 0.7);
-    border: 1px solid alpha(@theme_fg_color, 0.1);
+    background-color: alpha(#1a1a2e, 0.7);
+    border: 1px solid alpha(#e0e0e0, 0.1);
+    color: #e0e0e0;
 }
 
 .note-list-search:focus {
@@ -186,12 +262,17 @@ window.brain-window {
 
 .note-row-preview {
     font-size: 12px;
-    color: alpha(@theme_fg_color, 0.55);
+    color: alpha(#e0e0e0, 0.55);
 }
 
 .note-row-timestamp {
     font-size: 10px;
-    color: alpha(@theme_fg_color, 0.35);
+    color: alpha(#e0e0e0, 0.35);
+}
+
+/* Star indicator in list */
+.star-indicator {
+    font-size: 16px;
 }
 
 /* Delete button in note list */
@@ -201,7 +282,7 @@ window.brain-window {
     min-height: 24px;
     padding: 0;
     background-color: transparent;
-    color: alpha(@theme_fg_color, 0.3);
+    color: alpha(#e0e0e0, 0.3);
     border: none;
     transition: all 150ms ease;
 }
@@ -215,6 +296,8 @@ window.brain-window {
 popover.menu contents {
     padding: 4px;
     border-radius: 10px;
+    background-color: #1a1a2e;
+    color: #e0e0e0;
 }
 
 popover.menu modelbutton {
@@ -226,10 +309,17 @@ popover.menu modelbutton:hover {
     background-color: alpha(#b388ff, 0.12);
 }
 
+/* Popover general */
+popover contents {
+    background-color: #1a1a2e;
+    color: #e0e0e0;
+}
+
 /* Content frame */
 .content-frame {
     border-radius: 8px;
-    border: 1px solid alpha(@theme_fg_color, 0.08);
+    border: 1px solid alpha(#e0e0e0, 0.08);
+    background-color: transparent;
 }
 
 /* Emoji button */
@@ -263,12 +353,12 @@ popover.menu modelbutton:hover {
 
 .thumbnail-frame {
     border-radius: 6px;
-    border: 1px solid alpha(@theme_fg_color, 0.1);
+    border: 1px solid alpha(#e0e0e0, 0.1);
 }
 
 .preview-image-frame {
     border-radius: 6px;
-    border: 1px solid alpha(@theme_fg_color, 0.08);
+    border: 1px solid alpha(#e0e0e0, 0.08);
     margin-top: 4px;
     margin-bottom: 4px;
 }
@@ -286,21 +376,32 @@ popover.menu modelbutton:hover {
 
 /* Chromeless (undecorated) note windows */
 .note-window.chromeless {
-    border: 1px solid alpha(@theme_fg_color, 0.15);
+    border: 1px solid alpha(#e0e0e0, 0.15);
     border-radius: 8px;
+}
+
+/* Resize grip */
+.resize-grip {
+    opacity: 0.4;
+    transition: opacity 150ms ease;
+}
+
+.resize-grip:hover {
+    opacity: 0.8;
 }
 
 /* Backlinks pane */
 .backlinks-pane {
     padding: 4px 8px;
-    border-top: 1px solid alpha(@theme_fg_color, 0.08);
+    border-top: 1px solid alpha(#e0e0e0, 0.08);
     min-height: 28px;
+    background-color: transparent;
 }
 
 .backlinks-label {
     font-size: 11px;
     font-weight: 600;
-    color: alpha(@theme_fg_color, 0.45);
+    color: alpha(#e0e0e0, 0.45);
 }
 
 .backlink-btn {
@@ -323,4 +424,28 @@ popover.menu modelbutton:hover {
     border: 3px solid #b388ff;
     border-radius: 8px;
     box-shadow: 0 0 12px alpha(#b388ff, 0.5);
+}
+
+/* Heading label */
+.heading {
+    font-size: 16px;
+    font-weight: 700;
+}
+
+/* Tangle map bottom bar */
+.tangle-map-bottom {
+    padding: 2px 8px;
+    background-color: rgba(16, 16, 28, 0.9);
+}
+
+.tangle-map-hints {
+    padding: 4px 8px;
+    font-size: 10px;
+    color: rgba(200, 200, 200, 0.5);
+}
+
+.tangle-map-search {
+    min-width: 140px;
+    max-width: 200px;
+    font-size: 12px;
 }

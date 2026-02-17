@@ -20,6 +20,8 @@ pub struct Note {
     pub theme_fg: Option<String>,
     pub theme_accent: Option<String>,
     pub custom_colors: Option<String>,
+    pub chromeless: bool,
+    pub star_color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,19 +132,28 @@ impl Database {
         if !has_custom_colors {
             conn.execute_batch("ALTER TABLE notes ADD COLUMN custom_colors TEXT;")?;
         }
+        let has_chromeless: bool = conn
+            .prepare("SELECT chromeless FROM notes LIMIT 0")
+            .is_ok();
+        if !has_chromeless {
+            conn.execute_batch(
+                "ALTER TABLE notes ADD COLUMN chromeless BOOLEAN DEFAULT 0;
+                 ALTER TABLE notes ADD COLUMN star_color TEXT;"
+            )?;
+        }
         Ok(())
     }
 
     pub fn create_note(&self, note: &Note) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO notes (title, content, created_at, updated_at, position_x, position_y, is_visible, always_on_top, width, height, theme_bg, theme_fg, theme_accent, custom_colors)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            "INSERT INTO notes (title, content, created_at, updated_at, position_x, position_y, is_visible, always_on_top, width, height, theme_bg, theme_fg, theme_accent, custom_colors, chromeless, star_color)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 note.title, note.content, note.created_at, note.updated_at,
                 note.position_x, note.position_y, note.is_visible, note.always_on_top,
                 note.width, note.height, note.theme_bg, note.theme_fg, note.theme_accent,
-                note.custom_colors
+                note.custom_colors, note.chromeless, note.star_color
             ],
         )?;
         let note_id = conn.last_insert_rowid();
@@ -153,13 +164,13 @@ impl Database {
     pub fn update_note(&self, note: &Note) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "UPDATE notes SET title = ?1, content = ?2, updated_at = ?3, position_x = ?4, position_y = ?5, is_visible = ?6, always_on_top = ?7, width = ?8, height = ?9, theme_bg = ?10, theme_fg = ?11, theme_accent = ?12, custom_colors = ?13
-             WHERE id = ?14",
+            "UPDATE notes SET title = ?1, content = ?2, updated_at = ?3, position_x = ?4, position_y = ?5, is_visible = ?6, always_on_top = ?7, width = ?8, height = ?9, theme_bg = ?10, theme_fg = ?11, theme_accent = ?12, custom_colors = ?13, chromeless = ?14, star_color = ?15
+             WHERE id = ?16",
             params![
                 note.title, note.content, note.updated_at,
                 note.position_x, note.position_y, note.is_visible, note.always_on_top,
                 note.width, note.height, note.theme_bg, note.theme_fg, note.theme_accent,
-                note.custom_colors, note.id
+                note.custom_colors, note.chromeless, note.star_color, note.id
             ],
         )?;
         if let Some(note_id) = note.id {
@@ -172,7 +183,7 @@ impl Database {
     pub fn get_note(&self, id: i64) -> Result<Option<Note>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare_cached(
-            "SELECT id, title, content, created_at, updated_at, position_x, position_y, is_visible, always_on_top, width, height, theme_bg, theme_fg, theme_accent, custom_colors
+            "SELECT id, title, content, created_at, updated_at, position_x, position_y, is_visible, always_on_top, width, height, theme_bg, theme_fg, theme_accent, custom_colors, chromeless, star_color
              FROM notes WHERE id = ?1"
         )?;
         let mut rows = stmt.query_map([id], Self::row_to_note)?;
@@ -185,7 +196,7 @@ impl Database {
     pub fn get_all_notes(&self) -> Result<Vec<Note>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare_cached(
-            "SELECT id, title, content, created_at, updated_at, position_x, position_y, is_visible, always_on_top, width, height, theme_bg, theme_fg, theme_accent, custom_colors
+            "SELECT id, title, content, created_at, updated_at, position_x, position_y, is_visible, always_on_top, width, height, theme_bg, theme_fg, theme_accent, custom_colors, chromeless, star_color
              FROM notes ORDER BY updated_at DESC"
         )?;
         let rows = stmt.query_map([], Self::row_to_note)?;
@@ -195,7 +206,7 @@ impl Database {
     pub fn get_recent_notes(&self, limit: usize) -> Result<Vec<Note>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare_cached(
-            "SELECT id, title, content, created_at, updated_at, position_x, position_y, is_visible, always_on_top, width, height, theme_bg, theme_fg, theme_accent, custom_colors
+            "SELECT id, title, content, created_at, updated_at, position_x, position_y, is_visible, always_on_top, width, height, theme_bg, theme_fg, theme_accent, custom_colors, chromeless, star_color
              FROM notes ORDER BY updated_at DESC LIMIT ?1"
         )?;
         let rows = stmt.query_map([limit as i64], Self::row_to_note)?;
@@ -205,7 +216,7 @@ impl Database {
     pub fn get_note_by_title(&self, title: &str) -> Result<Option<Note>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare_cached(
-            "SELECT id, title, content, created_at, updated_at, position_x, position_y, is_visible, always_on_top, width, height, theme_bg, theme_fg, theme_accent, custom_colors
+            "SELECT id, title, content, created_at, updated_at, position_x, position_y, is_visible, always_on_top, width, height, theme_bg, theme_fg, theme_accent, custom_colors, chromeless, star_color
              FROM notes WHERE title = ?1"
         )?;
         let mut rows = stmt.query_map([title], Self::row_to_note)?;
@@ -219,7 +230,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let pattern = format!("%tangle://{}%", title);
         let mut stmt = conn.prepare_cached(
-            "SELECT id, title, content, created_at, updated_at, position_x, position_y, is_visible, always_on_top, width, height, theme_bg, theme_fg, theme_accent, custom_colors
+            "SELECT id, title, content, created_at, updated_at, position_x, position_y, is_visible, always_on_top, width, height, theme_bg, theme_fg, theme_accent, custom_colors, chromeless, star_color
              FROM notes WHERE content LIKE ?1
              ORDER BY updated_at DESC"
         )?;
@@ -238,7 +249,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let pattern = format!("%{}%", query);
         let mut stmt = conn.prepare_cached(
-            "SELECT id, title, content, created_at, updated_at, position_x, position_y, is_visible, always_on_top, width, height, theme_bg, theme_fg, theme_accent, custom_colors
+            "SELECT id, title, content, created_at, updated_at, position_x, position_y, is_visible, always_on_top, width, height, theme_bg, theme_fg, theme_accent, custom_colors, chromeless, star_color
              FROM notes WHERE title LIKE ?1 OR content LIKE ?1
              ORDER BY updated_at DESC"
         )?;
@@ -293,7 +304,7 @@ impl Database {
     pub fn find_notes_with_word(&self, word: &str) -> Result<Vec<Note>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare_cached(
-            "SELECT n.id, n.title, n.content, n.created_at, n.updated_at, n.position_x, n.position_y, n.is_visible, n.always_on_top, n.width, n.height, n.theme_bg, n.theme_fg, n.theme_accent, n.custom_colors
+            "SELECT n.id, n.title, n.content, n.created_at, n.updated_at, n.position_x, n.position_y, n.is_visible, n.always_on_top, n.width, n.height, n.theme_bg, n.theme_fg, n.theme_accent, n.custom_colors, n.chromeless, n.star_color
              FROM notes n
              JOIN word_index w ON n.id = w.note_id
              WHERE w.word = ?1
@@ -320,6 +331,8 @@ impl Database {
             theme_fg: row.get(12)?,
             theme_accent: row.get(13)?,
             custom_colors: row.get(14)?,
+            chromeless: row.get(15)?,
+            star_color: row.get(16)?,
         })
     }
 

@@ -8,6 +8,8 @@ mod database;
 mod pickers;
 mod rich_editor;
 mod note_window;
+mod theme;
+mod tangle_map;
 
 const APP_ID: &str = "com.tangles.Tangles";
 
@@ -16,7 +18,7 @@ const SETTING_WIN_W: &str = "win_w";
 const SETTING_WIN_H: &str = "win_h";
 const SETTING_WIN_X: &str = "win_x";
 const SETTING_WIN_Y: &str = "win_y";
-const SETTING_CHROMELESS: &str = "chromeless_notes";
+const SETTING_STAY_ON_TOP: &str = "brain_stay_on_top";
 
 fn main() -> glib::ExitCode {
     let app = Application::builder().application_id(APP_ID).build();
@@ -125,7 +127,7 @@ fn build_ui(app: &Application) {
     let drag_timer_ref = drag_save_timer.clone();
     drag.connect_drag_end(move |_, _, _| {
         if let Some(id) = drag_timer_ref.borrow_mut().take() {
-            id.remove();
+            unsafe { glib::ffi::g_source_remove(id.as_raw()); }
         }
         let db_ref = db_for_drag.clone();
         let timer_ref = drag_timer_ref.clone();
@@ -174,10 +176,32 @@ fn build_ui(app: &Application) {
     });
     icon_box.add_controller(scroll);
 
+    // Apply global theme from settings
+    theme::apply_global_theme(&db);
+
     // Register app actions
     register_actions(app, &window, &db);
 
     window.set_child(Some(&icon_box));
+
+    // Apply brain stay-on-top and shadowless on realize
+    let brain_on_top = db.get_setting(SETTING_STAY_ON_TOP)
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    {
+        let win = window.clone();
+        window.connect_realize(move |_| {
+            let w = win.clone();
+            let on_top = brain_on_top;
+            glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
+                set_brain_shadowless(&w);
+                if on_top {
+                    set_brain_on_top(true);
+                }
+            });
+        });
+    }
+
     window.present();
 
     // Periodic icon position save (background thread — no UI blocking)
@@ -210,7 +234,7 @@ fn build_ui(app: &Application) {
     let resize_timer_w = resize_timer.clone();
     window.connect_default_width_notify(move |win| {
         if let Some(id) = resize_timer_w.borrow_mut().take() {
-            id.remove();
+            unsafe { glib::ffi::g_source_remove(id.as_raw()); }
         }
         let db = db_for_resize.clone();
         let w = win.width();
@@ -232,7 +256,7 @@ fn build_ui(app: &Application) {
     let resize_timer_h = resize_timer.clone();
     window.connect_default_height_notify(move |win| {
         if let Some(id) = resize_timer_h.borrow_mut().take() {
-            id.remove();
+            unsafe { glib::ffi::g_source_remove(id.as_raw()); }
         }
         let db = db_for_resize2.clone();
         let w = win.width();
@@ -368,22 +392,59 @@ fn find_asset_path(filename: &str) -> Option<String> {
     None
 }
 
+/// Suppress compositor shadows on the brain window (X11 + picom/compton).
+fn set_brain_shadowless(_window: &ApplicationWindow) {
+    if std::env::var("XDG_SESSION_TYPE").unwrap_or_default() == "x11" {
+        // Set shadow-suppression hints for picom/compton compositors
+        let _ = std::process::Command::new("sh")
+            .args(["-c", "sleep 0.3 && xprop -name Tangles -f _COMPTON_SHADOW 32c -set _COMPTON_SHADOW 0 2>/dev/null; xprop -name Tangles -f _PICOM_SHADOW 32c -set _PICOM_SHADOW 0 2>/dev/null"])
+            .spawn();
+    }
+}
+
+/// Get the X11 window ID for a window by title.
+fn get_x11_window_id(title: &str) -> Option<String> {
+    let output = std::process::Command::new("xdotool")
+        .args(["search", "--name", &format!("^{}$", title)])
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.lines().next().map(|s| s.trim().to_string())
+}
+
+/// Set or remove always-on-top for a window by title using xdotool + wmctrl.
+fn set_brain_on_top(above: bool) {
+    // Try xdotool first (more reliable with special window types)
+    if let Some(wid) = get_x11_window_id("Tangles") {
+        let _ = std::process::Command::new("wmctrl")
+            .args(["-i", "-r", &wid, "-b", &format!("{},above", if above { "add" } else { "remove" })])
+            .output();
+    } else {
+        // Fallback to title match
+        let _ = std::process::Command::new("wmctrl")
+            .args(["-r", "Tangles", "-b", &format!("{},above", if above { "add" } else { "remove" })])
+            .output();
+    }
+}
+
 fn build_menu_model() -> gio::Menu {
     let menu = gio::Menu::new();
 
-    menu.append(Some("New Note"), Some("app.new-note"));
+    menu.append(Some("New Tangle"), Some("app.new-note"));
 
     let recent_section = gio::Menu::new();
-    recent_section.append(Some("Recent Notes..."), Some("app.recent-notes"));
+    recent_section.append(Some("Recent Tangles..."), Some("app.recent-notes"));
     menu.append_section(None, &recent_section);
 
     let browse_section = gio::Menu::new();
-    browse_section.append(Some("Search Notes..."), Some("app.search-notes"));
-    browse_section.append(Some("All Notes..."), Some("app.all-notes"));
+    browse_section.append(Some("Search Tangles..."), Some("app.search-notes"));
+    browse_section.append(Some("All Tangles..."), Some("app.all-notes"));
+    browse_section.append(Some("Tangle Map..."), Some("app.tangle-map"));
     menu.append_section(None, &browse_section);
 
     let prefs_section = gio::Menu::new();
-    prefs_section.append(Some("Chromeless Notes"), Some("app.chromeless-notes"));
+    prefs_section.append(Some("Stay on Top"), Some("app.stay-on-top"));
+    prefs_section.append(Some("Theme Settings..."), Some("app.theme-settings"));
     menu.append_section(None, &prefs_section);
 
     let quit_section = gio::Menu::new();
@@ -434,39 +495,46 @@ fn register_actions(app: &Application, window: &ApplicationWindow, db: &database
     });
     app.add_action(&all_notes_action);
 
-    // Chromeless Notes toggle
-    let chromeless_on = db.get_setting(SETTING_CHROMELESS)
+    // Stay on Top toggle for brain icon
+    let stay_on_top_on = db.get_setting(SETTING_STAY_ON_TOP)
         .map(|v| v == "true")
         .unwrap_or(false);
-    let chromeless_action = gio::SimpleAction::new_stateful(
-        "chromeless-notes",
+    let stay_on_top_action = gio::SimpleAction::new_stateful(
+        "stay-on-top",
         None,
-        &chromeless_on.to_variant(),
+        &stay_on_top_on.to_variant(),
     );
-    let db_for_chromeless = db.clone();
-    let app_for_chromeless = app.clone();
-    chromeless_action.connect_activate(move |action, _| {
+    let db_for_sot = db.clone();
+    stay_on_top_action.connect_activate(move |action, _| {
         let current = action.state().and_then(|v| v.get::<bool>()).unwrap_or(false);
         let new_val = !current;
         action.set_state(&new_val.to_variant());
-        let _ = db_for_chromeless.set_setting(SETTING_CHROMELESS, if new_val { "true" } else { "false" });
-
-        // Apply to all open note windows immediately
-        for win in app_for_chromeless.windows() {
-            if win.has_css_class("note-window") {
-                if let Ok(aw) = win.downcast::<ApplicationWindow>() {
-                    if new_val {
-                        aw.set_decorated(false);
-                        aw.add_css_class("chromeless");
-                    } else {
-                        aw.set_decorated(true);
-                        aw.remove_css_class("chromeless");
-                    }
-                }
-            }
-        }
+        let _ = db_for_sot.set_setting(SETTING_STAY_ON_TOP, if new_val { "true" } else { "false" });
+        // Defer to next iteration so the popover menu closes first
+        glib::timeout_add_local_once(std::time::Duration::from_millis(200), move || {
+            set_brain_on_top(new_val);
+        });
     });
-    app.add_action(&chromeless_action);
+    app.add_action(&stay_on_top_action);
+
+    // Theme Settings (global theme editor)
+    let theme_settings_action = gio::SimpleAction::new("theme-settings", None);
+    let db_for_theme = db.clone();
+    let win_for_theme = window.clone();
+    theme_settings_action.connect_activate(move |_, _| {
+        crate::theme::show_global_theme_dialog(&win_for_theme, &db_for_theme);
+    });
+    app.add_action(&theme_settings_action);
+
+    // Tangle Map
+    let tangle_map_action = gio::SimpleAction::new("tangle-map", None);
+    let app_for_map = app.clone();
+    let db_for_map = db.clone();
+    let win_for_map = window.clone();
+    tangle_map_action.connect_activate(move |_, _| {
+        crate::tangle_map::show_tangle_map(&app_for_map, &win_for_map, &db_for_map);
+    });
+    app.add_action(&tangle_map_action);
 
     // Quit
     let quit_action = gio::SimpleAction::new("quit", None);
@@ -492,9 +560,9 @@ fn show_note_list_dialog(
 ) {
     let dialog = Window::builder()
         .title(match mode {
-            NoteListMode::Recent => "Recent Notes",
-            NoteListMode::All => "All Notes",
-            NoteListMode::Search => "Search Notes",
+            NoteListMode::Recent => "Recent Tangles",
+            NoteListMode::All => "All Tangles",
+            NoteListMode::Search => "Search Tangles",
         })
         .default_width(420)
         .default_height(480)
@@ -588,7 +656,7 @@ fn show_note_list_dialog(
         std::rc::Rc::new(std::cell::RefCell::new(None));
     search_entry.connect_changed(move |entry| {
         if let Some(id) = search_timer.borrow_mut().take() {
-            id.remove();
+            unsafe { glib::ffi::g_source_remove(id.as_raw()); }
         }
         let query = entry.text().to_string();
         let db = db_for_search.clone();
@@ -635,9 +703,18 @@ fn populate_note_list(list_box: &ListBox, notes: &[database::Note], db: &databas
         list_box.remove(&child);
     }
 
+    // Sort starred tangles to top
+    let mut sorted: Vec<&database::Note> = notes.iter().collect();
+    sorted.sort_by(|a, b| {
+        let a_starred = a.star_color.is_some();
+        let b_starred = b.star_color.is_some();
+        b_starred.cmp(&a_starred)
+    });
+    let notes = sorted;
+
     if notes.is_empty() {
         let empty = Label::builder()
-            .label("No notes found")
+            .label("No tangles found")
             .css_classes(["dim-label"])
             .margin_top(20)
             .margin_bottom(20)
@@ -649,12 +726,22 @@ fn populate_note_list(list_box: &ListBox, notes: &[database::Note], db: &databas
         return;
     }
 
-    for note in notes {
+    for note in &notes {
         let outer_box = Box::builder()
             .orientation(Orientation::Horizontal)
             .spacing(8)
             .css_classes(["note-row"])
             .build();
+
+        // Star indicator
+        if let Some(ref color) = note.star_color {
+            let star = Label::builder()
+                .label("\u{2605}")
+                .css_classes(["star-indicator"])
+                .build();
+            star.set_markup(&format!("<span foreground=\"{}\">\u{2605}</span>", color));
+            outer_box.append(&star);
+        }
 
         let info_box = Box::builder()
             .orientation(Orientation::Vertical)

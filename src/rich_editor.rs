@@ -53,8 +53,16 @@ impl RichEditor {
 
         let bullet_list = TextTag::builder().name("bullet-list").left_margin(24).build();
         let numbered_list = TextTag::builder().name("numbered-list").left_margin(24).build();
+        let code = TextTag::builder()
+            .name("code")
+            .family("monospace")
+            .background("#2d2d2d")
+            .foreground("#e0e0e0")
+            .left_margin(16)
+            .right_margin(16)
+            .build();
 
-        for tag in [&bold, &italic, &underline, &strikethrough, &h1, &h2, &h3, &h4, &bullet_list, &numbered_list] {
+        for tag in [&bold, &italic, &underline, &strikethrough, &h1, &h2, &h3, &h4, &bullet_list, &numbered_list, &code] {
             table.add(tag);
         }
 
@@ -67,7 +75,7 @@ impl RichEditor {
         let image_map: Rc<RefCell<HashMap<i32, ImageInfo>>> = Rc::new(RefCell::new(HashMap::new()));
         let inhibit_changed = Rc::new(Cell::new(false));
 
-        // -- Toolbar --
+        // -- Toolbar hamburger toggle --
         let toolbar = gtk4::FlowBox::builder()
             .max_children_per_line(30)
             .min_children_per_line(1)
@@ -75,6 +83,25 @@ impl RichEditor {
             .homogeneous(false)
             .css_classes(["rich-toolbar"])
             .build();
+        let toolbar_hidden = db.get_setting("toolbar_hidden")
+            .map(|v| v == "true")
+            .unwrap_or(false);
+        toolbar.set_visible(!toolbar_hidden);
+
+        let hamburger_btn = Button::builder()
+            .label("\u{2630}")
+            .tooltip_text("Toggle toolbar")
+            .css_classes(["toolbar-toggle-btn"])
+            .build();
+        {
+            let toolbar_ref = toolbar.clone();
+            let db_ref = db.clone();
+            hamburger_btn.connect_clicked(move |_| {
+                let visible = toolbar_ref.is_visible();
+                toolbar_ref.set_visible(!visible);
+                let _ = db_ref.set_setting("toolbar_hidden", if visible { "true" } else { "false" });
+            });
+        }
 
         // Inline format buttons
         let fmt_buttons = [
@@ -204,7 +231,18 @@ impl RichEditor {
         });
         toolbar.insert(&img_btn, -1);
 
-        // Source view toggle button
+        // Code block button
+        let code_btn = Button::builder()
+            .label("{}")
+            .tooltip_text("Toggle code block")
+            .build();
+        let buf_code = buffer.clone();
+        code_btn.connect_clicked(move |_| {
+            toggle_code_block(&buf_code);
+        });
+        toolbar.insert(&code_btn, -1);
+
+        // Source view toggle button (always last)
         let is_source_mode: Rc<Cell<bool>> = Rc::new(Cell::new(false));
         let source_toggle_btn = Button::builder()
             .label("</>")
@@ -212,6 +250,7 @@ impl RichEditor {
             .build();
         toolbar.insert(&source_toggle_btn, -1);
 
+        widget.append(&hamburger_btn);
         widget.append(&toolbar);
 
         // -- Text View --
@@ -303,10 +342,88 @@ impl RichEditor {
         });
         text_view.add_controller(enter_controller);
 
+        // Hover tooltips for tangle/web links
+        let tooltip_motion = gtk4::EventControllerMotion::new();
+        let tv_tooltip = text_view.clone();
+        tooltip_motion.connect_motion(move |_, x, y| {
+            let (bx, by) = tv_tooltip.window_to_buffer_coords(gtk4::TextWindowType::Widget, x as i32, y as i32);
+            if let Some(iter) = tv_tooltip.iter_at_location(bx, by) {
+                for tag in iter.tags() {
+                    if let Some(name) = tag.name() {
+                        let name = name.to_string();
+                        if let Some(title) = name.strip_prefix("tangle::") {
+                            tv_tooltip.set_tooltip_text(Some(&format!("Tangle: {}", title)));
+                            return;
+                        }
+                        if let Some(url) = name.strip_prefix("link::") {
+                            tv_tooltip.set_tooltip_text(Some(&format!("Link: {}", url)));
+                            return;
+                        }
+                    }
+                }
+            }
+            tv_tooltip.set_tooltip_text(None);
+        });
+        text_view.add_controller(tooltip_motion);
+
+        // Click handler for web links — opens in system browser
+        let link_click = gtk4::GestureClick::builder().button(1).build();
+        link_click.set_propagation_phase(gtk4::PropagationPhase::Capture);
+        let tv_link = text_view.clone();
+        let db_link_click = db.clone();
+        let app_link_click = app.clone();
+        link_click.connect_pressed(move |gesture, _, x, y| {
+            let (bx, by) = tv_link.window_to_buffer_coords(gtk4::TextWindowType::Widget, x as i32, y as i32);
+            if let Some(iter) = tv_link.iter_at_location(bx, by) {
+                for tag in iter.tags() {
+                    if let Some(name) = tag.name() {
+                        let name = name.to_string();
+                        if let Some(url) = name.strip_prefix("link::") {
+                            let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+                            gesture.set_state(gtk4::EventSequenceState::Claimed);
+                            return;
+                        }
+                        if let Some(title) = name.strip_prefix("tangle::") {
+                            open_tangle_note(&db_link_click, &app_link_click, title);
+                            gesture.set_state(gtk4::EventSequenceState::Claimed);
+                            return;
+                        }
+                    }
+                }
+            }
+        });
+        text_view.add_controller(link_click);
+
+        // Drag/drop images
+        let drop_target = gtk4::DropTarget::new(gtk4::gdk::FileList::static_type(), gtk4::gdk::DragAction::COPY);
+        let buf_drop = buffer.clone();
+        let tv_drop = tv_holder.clone();
+        let im_drop = image_map.clone();
+        drop_target.connect_drop(move |_, value, _, _| {
+            if let Ok(file_list) = value.get::<gtk4::gdk::FileList>() {
+                let image_exts = ["png", "jpg", "jpeg", "gif", "svg", "webp", "bmp"];
+                for file in file_list.files() {
+                    if let Some(path) = file.path() {
+                        let path_str = path.to_string_lossy().to_string();
+                        let ext = path.extension()
+                            .map(|e| e.to_string_lossy().to_lowercase())
+                            .unwrap_or_default();
+                        if image_exts.contains(&ext.as_str()) {
+                            insert_image_widget(&buf_drop, &tv_drop, &path_str, 300, &im_drop);
+                        }
+                    }
+                }
+                return true;
+            }
+            false
+        });
+        text_view.add_controller(drop_target);
+
         // Tangle actions for the native context menu
         let tangle_target: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
         let create_target: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
         let link_target: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+        let web_link_target: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
 
         let action_group = gtk4::gio::SimpleActionGroup::new();
 
@@ -356,18 +473,19 @@ impl RichEditor {
         });
         action_group.add_action(&link_action);
 
+        let open_link_action = gtk4::gio::SimpleAction::new("open-link", None);
+        open_link_action.set_enabled(false);
+        let wlt = web_link_target.clone();
+        open_link_action.connect_activate(move |_, _| {
+            if let Some(ref url) = *wlt.borrow() {
+                let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+            }
+        });
+        action_group.add_action(&open_link_action);
+
         text_view.insert_action_group("tangle", Some(&action_group));
 
-        // Add tangle items to the native context menu
-        let tangle_menu = gtk4::gio::Menu::new();
-        tangle_menu.append(Some("Jump to Tangle"), Some("tangle.jump-tangle"));
-        tangle_menu.append(Some("Link to Tangle"), Some("tangle.link-tangle"));
-        tangle_menu.append(Some("Create Tangle"), Some("tangle.create-tangle"));
-        let extra_menu = gtk4::gio::Menu::new();
-        extra_menu.append_section(Some("Tangles"), &tangle_menu);
-        text_view.set_extra_menu(Some(&extra_menu));
-
-        // Update tangle action states on right-click (before menu shows)
+        // Update tangle action states and rebuild context menu on right-click
         let right_click = gtk4::GestureClick::builder().button(3).build();
         let buf_rc = buffer.clone();
         let tv_rc = text_view.clone();
@@ -375,14 +493,16 @@ impl RichEditor {
         let tangle_t2 = tangle_target.clone();
         let create_t2 = create_target.clone();
         let link_t2 = link_target.clone();
+        let wlt2 = web_link_target.clone();
         let jump_a = jump_action.clone();
         let create_a = create_action.clone();
         let link_a = link_action.clone();
+        let open_link_a = open_link_action.clone();
         right_click.connect_pressed(move |_, _, x, y| {
             update_tangle_actions(
                 &tv_rc, &buf_rc, x, y, &db_rc,
-                &jump_a, &create_a, &link_a,
-                &tangle_t2, &create_t2, &link_t2,
+                &jump_a, &create_a, &link_a, &open_link_a,
+                &tangle_t2, &create_t2, &link_t2, &wlt2,
             );
         });
         right_click.set_propagation_phase(gtk4::PropagationPhase::Capture);
@@ -466,9 +586,10 @@ impl RichEditor {
                 btn.remove_css_class("pinned");
                 is_src.set(false);
             } else {
-                // Rich → Source: serialize to HTML and show in source buffer
+                // Rich → Source: serialize to HTML and show in source buffer (beautified)
                 let html = serialize_to_html(&buf_toggle, &im_toggle);
-                src_buf_toggle.set_text(&html);
+                let pretty = pretty_print_html(&html);
+                src_buf_toggle.set_text(&pretty);
                 scrolled_ref.set_visible(false);
                 source_scrolled_ref.set_visible(true);
                 btn.add_css_class("pinned");
@@ -1057,6 +1178,8 @@ fn ensure_tangle_note_exists(db: &Database, title: &str) {
                 theme_fg: None,
                 theme_accent: None,
                 custom_colors: None,
+                chromeless: false,
+                star_color: None,
             };
             if let Err(e) = db.create_note(&note) {
                 eprintln!("Error auto-creating tangle note '{}': {}", title, e);
@@ -1069,6 +1192,7 @@ fn ensure_tangle_note_exists(db: &Database, title: &str) {
 }
 
 /// Update tangle action enabled state based on cursor/selection context.
+/// Rebuilds the context menu dynamically with tangle-specific items.
 fn update_tangle_actions(
     text_view: &TextView,
     buffer: &TextBuffer,
@@ -1078,20 +1202,31 @@ fn update_tangle_actions(
     jump_action: &gtk4::gio::SimpleAction,
     create_action: &gtk4::gio::SimpleAction,
     link_action: &gtk4::gio::SimpleAction,
+    open_link_action: &gtk4::gio::SimpleAction,
     tangle_target: &Rc<RefCell<Option<String>>>,
     create_target: &Rc<RefCell<Option<String>>>,
     link_target: &Rc<RefCell<Option<String>>>,
+    web_link_target: &Rc<RefCell<Option<String>>>,
 ) {
     let (bx, by) = text_view.window_to_buffer_coords(gtk4::TextWindowType::Widget, x as i32, y as i32);
     let iter_at_click = text_view.iter_at_location(bx, by);
 
-    // Check if clicking on a tangle tag
-    let tangle_title = iter_at_click.as_ref().and_then(|iter| {
-        iter.tags().into_iter().find_map(|tag| {
-            let name = tag.name()?.to_string();
-            name.strip_prefix("tangle::").map(|s| s.to_string())
-        })
-    });
+    // Check if clicking on a tangle tag or web link tag
+    let mut tangle_title = None;
+    let mut web_url = None;
+    if let Some(ref iter) = iter_at_click {
+        for tag in iter.tags() {
+            if let Some(name) = tag.name() {
+                let name = name.to_string();
+                if let Some(title) = name.strip_prefix("tangle::") {
+                    tangle_title = Some(title.to_string());
+                }
+                if let Some(url) = name.strip_prefix("link::") {
+                    web_url = Some(url.to_string());
+                }
+            }
+        }
+    }
 
     // Check selected text against DB
     let selected_text = buffer.selection_bounds().map(|(start, end)| {
@@ -1122,6 +1257,23 @@ fn update_tangle_actions(
 
     *link_target.borrow_mut() = show_link.clone();
     link_action.set_enabled(show_link.is_some());
+
+    *web_link_target.borrow_mut() = web_url.clone();
+    open_link_action.set_enabled(web_url.is_some());
+
+    // Rebuild context menu dynamically
+    let tangle_menu = gtk4::gio::Menu::new();
+    if let Some(ref title) = tangle_title {
+        tangle_menu.append(Some(&format!("Jump to \"{}\"", title)), Some("tangle.jump-tangle"));
+    }
+    if web_url.is_some() {
+        tangle_menu.append(Some("Open Link"), Some("tangle.open-link"));
+    }
+    tangle_menu.append(Some("Link to Tangle"), Some("tangle.link-tangle"));
+    tangle_menu.append(Some("Create Tangle"), Some("tangle.create-tangle"));
+    let extra_menu = gtk4::gio::Menu::new();
+    extra_menu.append_section(Some("Tangles"), &tangle_menu);
+    text_view.set_extra_menu(Some(&extra_menu));
 }
 
 /// Open a note by title (for tangle navigation).
@@ -1190,7 +1342,7 @@ fn auto_link_note_titles(buffer: &TextBuffer, db: &Database, own_title: &str) {
         let mut matches: Vec<(usize, String)> = Vec::new();
 
         for title in &titles {
-            if title == &own || title.is_empty() || title == "New Note" {
+            if title == &own || title.is_empty() || title == "New Tangle" {
                 continue;
             }
             let title_chars: Vec<char> = title.chars().collect();
@@ -1501,6 +1653,7 @@ fn serialize_to_html(buffer: &TextBuffer, image_map: &Rc<RefCell<HashMap<i32, Im
             Some("h3") => html.push_str("<h3>"),
             Some("h4") => html.push_str("<h4>"),
             Some("bullet-list") | Some("numbered-list") => html.push_str("<li>"),
+            Some("code") => html.push_str("<pre><code>"),
             _ => html.push_str("<p>"),
         }
 
@@ -1513,6 +1666,7 @@ fn serialize_to_html(buffer: &TextBuffer, image_map: &Rc<RefCell<HashMap<i32, Im
             Some("h3") => html.push_str("</h3>"),
             Some("h4") => html.push_str("</h4>"),
             Some("bullet-list") | Some("numbered-list") => html.push_str("</li>"),
+            Some("code") => html.push_str("</code></pre>"),
             _ => html.push_str("</p>"),
         }
         html.push('\n');
@@ -1531,7 +1685,7 @@ fn serialize_to_html(buffer: &TextBuffer, image_map: &Rc<RefCell<HashMap<i32, Im
 }
 
 fn determine_block_tag(buffer: &TextBuffer, start: &TextIter, end: &TextIter) -> Option<String> {
-    for tag_name in &["h1", "h2", "h3", "h4", "bullet-list", "numbered-list"] {
+    for tag_name in &["h1", "h2", "h3", "h4", "bullet-list", "numbered-list", "code"] {
         if has_tag_in_range(buffer, tag_name, start, end) {
             return Some(tag_name.to_string());
         }
@@ -1665,7 +1819,7 @@ fn strip_list_prefix(text: &str) -> String {
 }
 
 fn get_inline_tag_names(iter: &TextIter) -> Vec<String> {
-    let block_tags = ["h1", "h2", "h3", "h4", "bullet-list", "numbered-list"];
+    let block_tags = ["h1", "h2", "h3", "h4", "bullet-list", "numbered-list", "code"];
     iter.tags()
         .into_iter()
         .filter_map(|t| {
@@ -1785,6 +1939,19 @@ fn deserialize_html(
                         let new_offset = buffer.end_iter().offset();
                         tag_stack.push((name.clone(), attrs.clone(), new_offset));
                     }
+                    "pre" | "code" => {
+                        // Code blocks: treat like block elements
+                        if name == "pre" {
+                            if need_newline_before_block {
+                                let mut end = buffer.end_iter();
+                                buffer.insert(&mut end, "\n");
+                            }
+                            need_newline_before_block = true;
+                            in_block = true;
+                        }
+                        let offset = buffer.end_iter().offset();
+                        tag_stack.push((name.clone(), attrs.clone(), offset));
+                    }
                     "h1" | "h2" | "h3" | "h4" | "p" => {
                         if need_newline_before_block {
                             let mut end = buffer.end_iter();
@@ -1883,6 +2050,13 @@ fn deserialize_html(
                                         let tag = get_or_create_tag(&buffer.tag_table(), &tag_name);
                                         buffer.apply_tag(&tag, &start, &end);
                                     }
+                                    "pre" | "code" => {
+                                        let tag = get_or_create_tag(&buffer.tag_table(), "code");
+                                        buffer.apply_tag(&tag, &start, &end);
+                                        if tag_name == "pre" {
+                                            in_block = false;
+                                        }
+                                    }
                                     "li" => {
                                         let list_tag = match list_context.last().map(|s| s.as_str()) {
                                             Some("ul") => "bullet-list",
@@ -1937,6 +2111,68 @@ fn deserialize_html(
             }
         }
     }
+}
+
+fn toggle_code_block(buffer: &TextBuffer) {
+    let mark = buffer.get_insert();
+    let iter = buffer.iter_at_mark(&mark);
+    let line = iter.line();
+    let line_start = buffer.iter_at_line(line).unwrap_or(iter);
+    let mut line_end = line_start;
+    if !line_end.ends_line() {
+        line_end.forward_to_line_end();
+    }
+
+    let tag = get_or_create_tag(&buffer.tag_table(), "code");
+    if has_tag_in_range(buffer, "code", &line_start, &line_end) {
+        buffer.remove_tag(&tag, &line_start, &line_end);
+    } else {
+        buffer.apply_tag(&tag, &line_start, &line_end);
+    }
+}
+
+fn pretty_print_html(html: &str) -> String {
+    let block_tags = ["p", "h1", "h2", "h3", "h4", "ul", "ol", "li", "pre"];
+    let mut result = String::new();
+    let mut indent = 0usize;
+    let mut pos = 0;
+    let bytes = html.as_bytes();
+
+    while pos < html.len() {
+        if bytes[pos] == b'<' {
+            // Find end of tag
+            let tag_end = html[pos..].find('>').map(|i| pos + i + 1).unwrap_or(html.len());
+            let tag_str = &html[pos..tag_end];
+            let is_close = tag_str.starts_with("</");
+            let tag_name = tag_str.trim_start_matches("</").trim_start_matches('<')
+                .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+                .next()
+                .unwrap_or("");
+
+            if block_tags.contains(&tag_name) {
+                if is_close {
+                    if indent > 0 { indent -= 1; }
+                    if !result.ends_with('\n') { result.push('\n'); }
+                    for _ in 0..indent { result.push_str("  "); }
+                    result.push_str(tag_str);
+                    result.push('\n');
+                } else {
+                    if !result.ends_with('\n') && !result.is_empty() { result.push('\n'); }
+                    for _ in 0..indent { result.push_str("  "); }
+                    result.push_str(tag_str);
+                    result.push('\n');
+                    indent += 1;
+                }
+            } else {
+                result.push_str(tag_str);
+            }
+            pos = tag_end;
+        } else {
+            result.push(html.as_bytes()[pos] as char);
+            pos += 1;
+        }
+    }
+    result
 }
 
 fn parse_style_color(style: &str) -> Option<String> {

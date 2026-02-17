@@ -15,7 +15,7 @@ impl NoteWindow {
     pub fn new(app: &gtk4::Application, db: Database, note: Option<Note>) -> Self {
         let note = note.unwrap_or_else(|| Note {
             id: None,
-            title: "New Note".to_string(),
+            title: "New Tangle".to_string(),
             content: String::new(),
             created_at: chrono::Utc::now().to_rfc3339(),
             updated_at: chrono::Utc::now().to_rfc3339(),
@@ -29,6 +29,8 @@ impl NoteWindow {
             theme_fg: None,
             theme_accent: None,
             custom_colors: None,
+            chromeless: false,
+            star_color: None,
         });
 
         let win_w = if note.width > 0 { note.width } else { 500 };
@@ -71,10 +73,9 @@ impl NoteWindow {
         };
         window.add_css_class(&note_class);
 
-        // Apply chromeless setting
-        let chromeless = db.get_setting("chromeless_notes")
-            .map(|v| v == "true")
-            .unwrap_or(false);
+        // Apply per-note chromeless setting
+        let chromeless = note.chromeless;
+        let is_chromeless: Rc<RefCell<bool>> = Rc::new(RefCell::new(chromeless));
         if chromeless {
             window.set_decorated(false);
             window.add_css_class("chromeless");
@@ -98,15 +99,35 @@ impl NoteWindow {
 
         let title_entry = Entry::builder()
             .text(&note.title)
-            .placeholder_text("Note Title...")
+            .placeholder_text("Tangle Title...")
             .hexpand(true)
             .css_classes(["note-title-entry"])
             .build();
 
         let palette_btn = Button::builder()
             .label("\u{1f3a8}")
-            .tooltip_text("Note theme")
+            .tooltip_text("Tangle theme")
             .css_classes(["palette-button"])
+            .build();
+
+        // Star button for labeling
+        let star_color_rc: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(note.star_color.clone()));
+        let star_btn = Button::builder()
+            .label(if note.star_color.is_some() { "\u{2605}" } else { "\u{2606}" })
+            .tooltip_text("Star label")
+            .css_classes(["star-button"])
+            .build();
+        if let Some(ref color) = note.star_color {
+            let lbl = Label::new(None);
+            lbl.set_markup(&format!("<span foreground=\"{}\">\u{2605}</span>", color));
+            star_btn.set_child(Some(&lbl));
+        }
+
+        // Chromeless toggle per-tangle
+        let chromeless_btn = Button::builder()
+            .label(if note.chromeless { "\u{25a1}" } else { "\u{25a0}" })
+            .tooltip_text("Toggle chromeless (borderless)")
+            .css_classes(["chromeless-button"])
             .build();
 
         let always_on_top_btn = Button::builder()
@@ -116,6 +137,8 @@ impl NoteWindow {
             .build();
 
         title_box.append(&title_entry);
+        title_box.append(&star_btn);
+        title_box.append(&chromeless_btn);
         title_box.append(&palette_btn);
         title_box.append(&always_on_top_btn);
         main_box.append(&title_box);
@@ -176,7 +199,7 @@ impl NoteWindow {
         let note_class_ref = note_class.clone();
         apply_note_theme(&theme_provider, &note_class_ref, &note.theme_bg, &note.theme_fg, &note.theme_accent);
 
-        // Palette button
+        // Palette button — defer popup to next main loop iteration to avoid immediate dismiss
         let tb = theme_bg.clone();
         let tf = theme_fg.clone();
         let ta = theme_accent.clone();
@@ -190,8 +213,91 @@ impl NoteWindow {
                 old.unparent();
             }
             let popover = show_theme_picker(btn, &tb, &tf, &ta, &cc, &tp, &nc);
+            let pop_ref = popover.clone();
             *prev_popover.borrow_mut() = Some(popover);
+            // Defer popup to next iteration to avoid button click dismissing it
+            glib::idle_add_local_once(move || {
+                pop_ref.popup();
+            });
         });
+
+        // Star button handler
+        {
+            let star_c = star_color_rc.clone();
+            let star_b = star_btn.clone();
+            let prev_star_pop: Rc<RefCell<Option<gtk4::Popover>>> = Rc::new(RefCell::new(None));
+            star_btn.connect_clicked(move |btn| {
+                if let Some(old) = prev_star_pop.borrow_mut().take() {
+                    old.unparent();
+                }
+                let popover = gtk4::Popover::new();
+                popover.set_parent(btn);
+                let hbox = gtk4::Box::builder()
+                    .orientation(gtk4::Orientation::Horizontal)
+                    .spacing(4)
+                    .margin_top(4).margin_bottom(4).margin_start(4).margin_end(4)
+                    .build();
+                let colors = ["#ef5350", "#ffca28", "#66bb6a", "#42a5f5", "#7e57c2"];
+                for color in &colors {
+                    let c = color.to_string();
+                    let sc = star_c.clone();
+                    let sb = star_b.clone();
+                    let pop = popover.clone();
+                    let cbtn = Button::builder()
+                        .label("\u{2605}")
+                        .css_classes(["star-color-btn"])
+                        .tooltip_text(*color)
+                        .build();
+                    let clbl = Label::new(None);
+                    clbl.set_markup(&format!("<span foreground=\"{}\">\u{2605}</span>", c));
+                    cbtn.set_child(Some(&clbl));
+                    cbtn.connect_clicked(move |_| {
+                        *sc.borrow_mut() = Some(c.clone());
+                        let lbl = Label::new(None);
+                        lbl.set_markup(&format!("<span foreground=\"{}\">\u{2605}</span>", c));
+                        sb.set_child(Some(&lbl));
+                        pop.popdown();
+                    });
+                    hbox.append(&cbtn);
+                }
+                // "None" button to clear star
+                let sc = star_c.clone();
+                let sb = star_b.clone();
+                let pop = popover.clone();
+                let none_btn = Button::builder().label("x").tooltip_text("Remove star").build();
+                none_btn.connect_clicked(move |_| {
+                    *sc.borrow_mut() = None;
+                    sb.set_label("\u{2606}");
+                    pop.popdown();
+                });
+                hbox.append(&none_btn);
+                popover.set_child(Some(&hbox));
+                *prev_star_pop.borrow_mut() = Some(popover.clone());
+                glib::idle_add_local_once(move || {
+                    popover.popup();
+                });
+            });
+        }
+
+        // Chromeless toggle per-tangle
+        {
+            let is_cl = is_chromeless.clone();
+            let win_cl = window.clone();
+            let cl_btn = chromeless_btn.clone();
+            chromeless_btn.connect_clicked(move |_| {
+                let mut cl = is_cl.borrow_mut();
+                *cl = !*cl;
+                if *cl {
+                    win_cl.set_decorated(false);
+                    win_cl.add_css_class("chromeless");
+                    cl_btn.set_label("\u{25a1}");
+                } else {
+                    win_cl.set_decorated(true);
+                    win_cl.remove_css_class("chromeless");
+                    cl_btn.set_label("\u{25a0}");
+                }
+            });
+        }
 
         // -- Geometry cache (updated by background thread, never blocks UI) --
         let cached_geo: Arc<Mutex<(i32, i32, i32, i32)>> = Arc::new(Mutex::new((
@@ -237,13 +343,15 @@ impl NoteWindow {
             let note_class_ref = note_class_for_save.clone();
             let win_for_class = window.clone();
             let cached_geo = cached_geo.clone();
+            let is_chromeless = is_chromeless.clone();
+            let star_color_rc = star_color_rc.clone();
 
             Rc::new(move || {
                 let title = title_entry.text().to_string();
                 let content = editor_ref.get_content();
 
                 let current_id = *note_id.borrow();
-                if current_id.is_none() && title == "New Note" && content.is_empty() {
+                if current_id.is_none() && title == "New Tangle" && content.is_empty() {
                     return;
                 }
 
@@ -264,6 +372,8 @@ impl NoteWindow {
                 save_note.theme_fg = theme_fg.borrow().clone();
                 save_note.theme_accent = theme_accent.borrow().clone();
                 save_note.custom_colors = custom_colors.borrow().clone();
+                save_note.chromeless = *is_chromeless.borrow();
+                save_note.star_color = star_color_rc.borrow().clone();
 
                 if current_id.is_some() {
                     let db = db.clone();
@@ -361,13 +471,21 @@ impl NoteWindow {
             }
         });
 
-        // Backlinks refresh
+        // Backlinks refresh with dedup tracking
         let db_bl = db.clone();
         let app_bl = app.clone();
         let title_bl = title_entry.clone();
         let bl_box = backlinks_box.clone();
+        let bl_poll_id: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
+        let bl_poll_ref = bl_poll_id.clone();
         let refresh_backlinks = Rc::new(move || {
-            refresh_backlinks_pane(&bl_box, &db_bl, &title_bl.text(), &app_bl);
+            // Cancel any in-flight poll (ignore error if source already completed)
+            if let Some(id) = bl_poll_ref.borrow_mut().take() {
+                unsafe { glib::ffi::g_source_remove(id.as_raw()); }
+            }
+            let poll_ref = bl_poll_ref.clone();
+            let source_id = refresh_backlinks_pane(&bl_box, &db_bl, &title_bl.text(), &app_bl);
+            *poll_ref.borrow_mut() = source_id;
         });
 
         // Initial backlinks population
@@ -442,14 +560,18 @@ impl NoteWindow {
             });
         });
 
-        // Edge-resize gesture for chromeless windows
-        if chromeless {
+        // Edge-resize gesture (always active — works for both chromeless and decorated)
+        {
             let edge_drag = gtk4::GestureDrag::builder().button(1).build();
             let win_for_edge = window.clone();
+            let is_cl_for_edge = is_chromeless.clone();
             edge_drag.connect_drag_begin(move |gesture, x, y| {
+                if !*is_cl_for_edge.borrow() {
+                    return;
+                }
                 let w = win_for_edge.width() as f64;
                 let h = win_for_edge.height() as f64;
-                if let Some(edge) = determine_edge(x, y, w, h, 8.0) {
+                if let Some(edge) = determine_edge(x, y, w, h, 12.0) {
                     if let Some(surface) = win_for_edge.surface() {
                         if let Some(toplevel) = surface.downcast_ref::<gtk4::gdk::Toplevel>() {
                             let device = gesture.device().unwrap();
@@ -465,6 +587,71 @@ impl NoteWindow {
                 }
             });
             main_box.add_controller(edge_drag);
+
+            // Edge cursor change on hover
+            let edge_motion = gtk4::EventControllerMotion::new();
+            let win_for_cursor = window.clone();
+            let is_cl_for_cursor = is_chromeless.clone();
+            edge_motion.connect_motion(move |_, x, y| {
+                if !*is_cl_for_cursor.borrow() {
+                    return;
+                }
+                let w = win_for_cursor.width() as f64;
+                let h = win_for_cursor.height() as f64;
+                let cursor_name = match determine_edge(x, y, w, h, 12.0) {
+                    Some(gtk4::gdk::SurfaceEdge::North) | Some(gtk4::gdk::SurfaceEdge::South) => Some("ns-resize"),
+                    Some(gtk4::gdk::SurfaceEdge::East) | Some(gtk4::gdk::SurfaceEdge::West) => Some("ew-resize"),
+                    Some(gtk4::gdk::SurfaceEdge::NorthWest) | Some(gtk4::gdk::SurfaceEdge::SouthEast) => Some("nwse-resize"),
+                    Some(gtk4::gdk::SurfaceEdge::NorthEast) | Some(gtk4::gdk::SurfaceEdge::SouthWest) => Some("nesw-resize"),
+                    _ => None,
+                };
+                if let Some(name) = cursor_name {
+                    if let Some(cursor) = gtk4::gdk::Cursor::from_name(name, None) {
+                        win_for_cursor.set_cursor(Some(&cursor));
+                    }
+                } else {
+                    win_for_cursor.set_cursor(gtk4::gdk::Cursor::from_name("default", None).as_ref());
+                }
+            });
+            main_box.add_controller(edge_motion);
+
+            // Resize grip in bottom-right corner
+            let grip = gtk4::DrawingArea::builder()
+                .width_request(16)
+                .height_request(16)
+                .halign(gtk4::Align::End)
+                .valign(gtk4::Align::End)
+                .css_classes(["resize-grip"])
+                .build();
+            grip.set_draw_func(|_area, cr, w, h| {
+                let w = w as f64;
+                let h = h as f64;
+                cr.set_source_rgba(1.0, 1.0, 1.0, 0.3);
+                cr.set_line_width(1.0);
+                for offset in &[4.0, 8.0, 12.0] {
+                    cr.move_to(w, h - offset);
+                    cr.line_to(w - offset, h);
+                    let _ = cr.stroke();
+                }
+            });
+            let grip_drag = gtk4::GestureDrag::builder().button(1).build();
+            let win_for_grip = window.clone();
+            grip_drag.connect_drag_begin(move |gesture, x, y| {
+                if let Some(surface) = win_for_grip.surface() {
+                    if let Some(toplevel) = surface.downcast_ref::<gtk4::gdk::Toplevel>() {
+                        let device = gesture.device().unwrap();
+                        let timestamp = gesture.current_event_time();
+                        let (sx, sy) = if let Some(event) = gesture.last_event(gesture.current_sequence().as_ref()) {
+                            event.position().unwrap_or((x, y))
+                        } else {
+                            (x, y)
+                        };
+                        toplevel.begin_resize(gtk4::gdk::SurfaceEdge::SouthEast, Some(&device), 1, sx, sy, timestamp);
+                    }
+                }
+            });
+            grip.add_controller(grip_drag);
+            main_box.append(&grip);
         }
 
         NoteWindow { window }
@@ -706,7 +893,7 @@ fn show_theme_picker(
     vbox.append(&reset_btn);
 
     popover.set_child(Some(&vbox));
-    popover.popup();
+    // Don't popup() here — caller defers it via glib::idle_add_local_once
     popover
 }
 
@@ -909,10 +1096,10 @@ fn refresh_backlinks_pane(
     db: &Database,
     title: &str,
     app: &gtk4::Application,
-) {
-    if title.is_empty() || title == "New Note" {
+) -> Option<glib::SourceId> {
+    if title.is_empty() || title == "New Tangle" {
         backlinks_box.set_visible(false);
-        return;
+        return None;
     }
 
     // DB query on background thread, UI update on main thread via channel
@@ -922,14 +1109,24 @@ fn refresh_backlinks_pane(
 
     std::thread::spawn(move || {
         let linking_notes = db_bg.get_notes_linking_to(&title).unwrap_or_default();
-        let titles: Vec<String> = linking_notes.iter().map(|n| n.title.clone()).collect();
+        // Dedup with HashSet
+        let mut seen = std::collections::HashSet::new();
+        let titles: Vec<String> = linking_notes.iter()
+            .filter_map(|n| {
+                if seen.insert(n.title.clone()) {
+                    Some(n.title.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
         let _ = tx.send(titles);
     });
 
     let bl_box = backlinks_box.clone();
     let db = db.clone();
     let app = app.clone();
-    glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
+    let source_id = glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
         match rx.try_recv() {
             Ok(titles) => {
                 while let Some(child) = bl_box.first_child() {
@@ -968,6 +1165,7 @@ fn refresh_backlinks_pane(
             Err(_) => glib::ControlFlow::Break,
         }
     });
+    Some(source_id)
 }
 
 fn determine_edge(x: f64, y: f64, w: f64, h: f64, margin: f64) -> Option<gtk4::gdk::SurfaceEdge> {
