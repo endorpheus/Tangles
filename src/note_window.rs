@@ -4,8 +4,19 @@ use gtk4::gdk::prelude::ToplevelExt;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use crate::database::{Database, Note};
 use crate::rich_editor::RichEditor;
+
+static APP_QUITTING: AtomicBool = AtomicBool::new(false);
+
+pub fn set_app_quitting(val: bool) {
+    APP_QUITTING.store(val, Ordering::SeqCst);
+}
+
+fn is_app_quitting() -> bool {
+    APP_QUITTING.load(Ordering::SeqCst)
+}
 
 pub struct NoteWindow {
     pub window: ApplicationWindow,
@@ -136,7 +147,13 @@ impl NoteWindow {
             .css_classes(["pin-button"])
             .build();
 
+        // Create editor early so we can grab its hamburger button for the title bar
+        let editor = RichEditor::new(db.clone(), app.clone(), &note.title);
+        editor.set_content(&note.content);
+        let source_buf_for_autosave = editor.get_source_buffer().clone();
+
         title_box.append(&title_entry);
+        title_box.append(&editor.hamburger_btn);
         title_box.append(&star_btn);
         title_box.append(&chromeless_btn);
         title_box.append(&palette_btn);
@@ -149,9 +166,6 @@ impl NoteWindow {
             .vexpand(true)
             .build();
 
-        let editor = RichEditor::new(db.clone(), app.clone(), &note.title);
-        editor.set_content(&note.content);
-        let source_buf_for_autosave = editor.get_source_buffer().clone();
         let editor_ref: Rc<RichEditor> = Rc::new(editor);
 
         content_frame.set_child(Some(&editor_ref.widget.clone()));
@@ -197,107 +211,7 @@ impl NoteWindow {
         );
 
         let note_class_ref = note_class.clone();
-        apply_note_theme(&theme_provider, &note_class_ref, &note.theme_bg, &note.theme_fg, &note.theme_accent);
-
-        // Palette button — defer popup to next main loop iteration to avoid immediate dismiss
-        let tb = theme_bg.clone();
-        let tf = theme_fg.clone();
-        let ta = theme_accent.clone();
-        let cc = custom_colors.clone();
-        let tp = theme_provider.clone();
-        let nc = note_class.clone();
-        let prev_popover: Rc<RefCell<Option<gtk4::Popover>>> = Rc::new(RefCell::new(None));
-        palette_btn.connect_clicked(move |btn| {
-            // Unparent any previous popover to avoid GTK stacking issue
-            if let Some(old) = prev_popover.borrow_mut().take() {
-                old.unparent();
-            }
-            let popover = show_theme_picker(btn, &tb, &tf, &ta, &cc, &tp, &nc);
-            let pop_ref = popover.clone();
-            *prev_popover.borrow_mut() = Some(popover);
-            // Defer popup to next iteration to avoid button click dismissing it
-            glib::idle_add_local_once(move || {
-                pop_ref.popup();
-            });
-        });
-
-        // Star button handler
-        {
-            let star_c = star_color_rc.clone();
-            let star_b = star_btn.clone();
-            let prev_star_pop: Rc<RefCell<Option<gtk4::Popover>>> = Rc::new(RefCell::new(None));
-            star_btn.connect_clicked(move |btn| {
-                if let Some(old) = prev_star_pop.borrow_mut().take() {
-                    old.unparent();
-                }
-                let popover = gtk4::Popover::new();
-                popover.set_parent(btn);
-                let hbox = gtk4::Box::builder()
-                    .orientation(gtk4::Orientation::Horizontal)
-                    .spacing(4)
-                    .margin_top(4).margin_bottom(4).margin_start(4).margin_end(4)
-                    .build();
-                let colors = ["#ef5350", "#ffca28", "#66bb6a", "#42a5f5", "#7e57c2"];
-                for color in &colors {
-                    let c = color.to_string();
-                    let sc = star_c.clone();
-                    let sb = star_b.clone();
-                    let pop = popover.clone();
-                    let cbtn = Button::builder()
-                        .label("\u{2605}")
-                        .css_classes(["star-color-btn"])
-                        .tooltip_text(*color)
-                        .build();
-                    let clbl = Label::new(None);
-                    clbl.set_markup(&format!("<span foreground=\"{}\">\u{2605}</span>", c));
-                    cbtn.set_child(Some(&clbl));
-                    cbtn.connect_clicked(move |_| {
-                        *sc.borrow_mut() = Some(c.clone());
-                        let lbl = Label::new(None);
-                        lbl.set_markup(&format!("<span foreground=\"{}\">\u{2605}</span>", c));
-                        sb.set_child(Some(&lbl));
-                        pop.popdown();
-                    });
-                    hbox.append(&cbtn);
-                }
-                // "None" button to clear star
-                let sc = star_c.clone();
-                let sb = star_b.clone();
-                let pop = popover.clone();
-                let none_btn = Button::builder().label("x").tooltip_text("Remove star").build();
-                none_btn.connect_clicked(move |_| {
-                    *sc.borrow_mut() = None;
-                    sb.set_label("\u{2606}");
-                    pop.popdown();
-                });
-                hbox.append(&none_btn);
-                popover.set_child(Some(&hbox));
-                *prev_star_pop.borrow_mut() = Some(popover.clone());
-                glib::idle_add_local_once(move || {
-                    popover.popup();
-                });
-            });
-        }
-
-        // Chromeless toggle per-tangle
-        {
-            let is_cl = is_chromeless.clone();
-            let win_cl = window.clone();
-            let cl_btn = chromeless_btn.clone();
-            chromeless_btn.connect_clicked(move |_| {
-                let mut cl = is_cl.borrow_mut();
-                *cl = !*cl;
-                if *cl {
-                    win_cl.set_decorated(false);
-                    win_cl.add_css_class("chromeless");
-                    cl_btn.set_label("\u{25a1}");
-                } else {
-                    win_cl.set_decorated(true);
-                    win_cl.remove_css_class("chromeless");
-                    cl_btn.set_label("\u{25a0}");
-                }
-            });
-        }
+        crate::theme::apply_note_theme(&theme_provider, &note_class_ref, &note.theme_bg, &note.theme_fg, &note.theme_accent);
 
         // -- Geometry cache (updated by background thread, never blocks UI) --
         let cached_geo: Arc<Mutex<(i32, i32, i32, i32)>> = Arc::new(Mutex::new((
@@ -307,7 +221,7 @@ impl NoteWindow {
         // Background geometry polling (runs wmctrl off the main thread)
         let win_for_geo = window.clone();
         let cached_geo_poll = cached_geo.clone();
-        glib::timeout_add_local(std::time::Duration::from_secs(5), move || {
+        glib::timeout_add_local(std::time::Duration::from_secs(3), move || {
             if !win_for_geo.is_visible() {
                 return glib::ControlFlow::Break;
             }
@@ -329,6 +243,8 @@ impl NoteWindow {
         let note_template = Rc::new(note.clone());
         let note_class_for_save = Rc::new(RefCell::new(note_class.clone()));
 
+        let is_pinned: Rc<RefCell<bool>> = Rc::new(RefCell::new(note.always_on_top));
+
         let do_save = {
             let note_id = note_id.clone();
             let note_template = note_template.clone();
@@ -345,6 +261,7 @@ impl NoteWindow {
             let cached_geo = cached_geo.clone();
             let is_chromeless = is_chromeless.clone();
             let star_color_rc = star_color_rc.clone();
+            let is_pinned = is_pinned.clone();
 
             Rc::new(move || {
                 let title = title_entry.text().to_string();
@@ -374,6 +291,8 @@ impl NoteWindow {
                 save_note.custom_colors = custom_colors.borrow().clone();
                 save_note.chromeless = *is_chromeless.borrow();
                 save_note.star_color = star_color_rc.borrow().clone();
+                save_note.always_on_top = *is_pinned.borrow();
+                save_note.is_visible = true;
 
                 if current_id.is_some() {
                     let db = db.clone();
@@ -415,7 +334,128 @@ impl NoteWindow {
             })
         };
 
-        // -- Autosave: debounce 5 seconds after any edit --
+        // Palette button — open unified theme editor
+        {
+            let tb = theme_bg.clone();
+            let tf = theme_fg.clone();
+            let ta = theme_accent.clone();
+            let cc = custom_colors.clone();
+            let tp = theme_provider.clone();
+            let nc = note_class.clone();
+            let win_for_palette = window.clone();
+            let prev_theme_win: Rc<RefCell<Option<gtk4::Window>>> = Rc::new(RefCell::new(None));
+            let do_save_theme = do_save.clone();
+            palette_btn.connect_clicked(move |_| {
+                if let Some(old) = prev_theme_win.borrow_mut().take() {
+                    old.close();
+                }
+                let theme_win = crate::theme::show_theme_editor(
+                    &win_for_palette,
+                    crate::theme::ThemeTarget::Note {
+                        provider: tp.clone(),
+                        note_class: nc.clone(),
+                        theme_bg: tb.clone(),
+                        theme_fg: tf.clone(),
+                        theme_accent: ta.clone(),
+                        custom_colors: cc.clone(),
+                    },
+                );
+                let save_fn = do_save_theme.clone();
+                theme_win.connect_close_request(move |_| {
+                    save_fn();
+                    glib::Propagation::Proceed
+                });
+                *prev_theme_win.borrow_mut() = Some(theme_win.clone());
+                theme_win.present();
+            });
+        }
+
+        // Star button handler
+        {
+            let star_c = star_color_rc.clone();
+            let star_b = star_btn.clone();
+            let do_save_star = do_save.clone();
+            let prev_star_pop: Rc<RefCell<Option<gtk4::Popover>>> = Rc::new(RefCell::new(None));
+            star_btn.connect_clicked(move |btn| {
+                if let Some(old) = prev_star_pop.borrow_mut().take() {
+                    old.unparent();
+                }
+                let popover = gtk4::Popover::new();
+                popover.set_parent(btn);
+                let hbox = gtk4::Box::builder()
+                    .orientation(gtk4::Orientation::Horizontal)
+                    .spacing(4)
+                    .margin_top(4).margin_bottom(4).margin_start(4).margin_end(4)
+                    .build();
+                let colors = ["#ef5350", "#ffca28", "#66bb6a", "#42a5f5", "#7e57c2"];
+                for color in &colors {
+                    let c = color.to_string();
+                    let sc = star_c.clone();
+                    let sb = star_b.clone();
+                    let pop = popover.clone();
+                    let save_fn = do_save_star.clone();
+                    let cbtn = Button::builder()
+                        .label("\u{2605}")
+                        .css_classes(["star-color-btn"])
+                        .tooltip_text(*color)
+                        .build();
+                    let clbl = Label::new(None);
+                    clbl.set_markup(&format!("<span foreground=\"{}\">\u{2605}</span>", c));
+                    cbtn.set_child(Some(&clbl));
+                    cbtn.connect_clicked(move |_| {
+                        *sc.borrow_mut() = Some(c.clone());
+                        let lbl = Label::new(None);
+                        lbl.set_markup(&format!("<span foreground=\"{}\">\u{2605}</span>", c));
+                        sb.set_child(Some(&lbl));
+                        pop.popdown();
+                        save_fn();
+                    });
+                    hbox.append(&cbtn);
+                }
+                let sc = star_c.clone();
+                let sb = star_b.clone();
+                let pop = popover.clone();
+                let save_fn = do_save_star.clone();
+                let none_btn = Button::builder().label("x").tooltip_text("Remove star").build();
+                none_btn.connect_clicked(move |_| {
+                    *sc.borrow_mut() = None;
+                    sb.set_label("\u{2606}");
+                    pop.popdown();
+                    save_fn();
+                });
+                hbox.append(&none_btn);
+                popover.set_child(Some(&hbox));
+                *prev_star_pop.borrow_mut() = Some(popover.clone());
+                glib::idle_add_local_once(move || {
+                    popover.popup();
+                });
+            });
+        }
+
+        // Chromeless toggle per-tangle
+        {
+            let is_cl = is_chromeless.clone();
+            let win_cl = window.clone();
+            let cl_btn = chromeless_btn.clone();
+            let do_save_cl = do_save.clone();
+            chromeless_btn.connect_clicked(move |_| {
+                let mut cl = is_cl.borrow_mut();
+                *cl = !*cl;
+                if *cl {
+                    win_cl.set_decorated(false);
+                    win_cl.add_css_class("chromeless");
+                    cl_btn.set_label("\u{25a1}");
+                } else {
+                    win_cl.set_decorated(true);
+                    win_cl.remove_css_class("chromeless");
+                    cl_btn.set_label("\u{25a0}");
+                }
+                drop(cl);
+                do_save_cl();
+            });
+        }
+
+        // -- Autosave: debounce 2 seconds after any edit --
         let autosave_timer: Rc<RefCell<Option<glib::SourceId>>> = Rc::new(RefCell::new(None));
 
         let schedule_autosave = {
@@ -429,7 +469,7 @@ impl NoteWindow {
                 let save_fn = do_save.clone();
                 let timer_ref = autosave_timer.clone();
                 let source_id = glib::timeout_add_local_once(
-                    std::time::Duration::from_secs(5),
+                    std::time::Duration::from_secs(2),
                     move || {
                         save_fn();
                         *timer_ref.borrow_mut() = None;
@@ -462,7 +502,7 @@ impl NoteWindow {
         // Periodic geometry save (catches moves/resizes without content edits)
         let do_save_geo = do_save.clone();
         let win_alive = window.clone();
-        glib::timeout_add_local(std::time::Duration::from_secs(10), move || {
+        glib::timeout_add_local(std::time::Duration::from_secs(5), move || {
             if win_alive.is_visible() {
                 do_save_geo();
                 glib::ControlFlow::Continue
@@ -506,15 +546,73 @@ impl NoteWindow {
             }
         });
 
-        // Close — save geometry BEFORE hiding, then close
-        let do_save_close = do_save.clone();
+        // Build a synchronous save closure for use at close time
+        let do_save_sync = {
+            let note_id = note_id.clone();
+            let note_template = note_template.clone();
+            let db = db.clone();
+            let title_entry = title_entry.clone();
+            let editor_ref = editor_ref.clone();
+            let theme_bg = theme_bg.clone();
+            let theme_fg = theme_fg.clone();
+            let theme_accent = theme_accent.clone();
+            let custom_colors = custom_colors.clone();
+            let cached_geo = cached_geo.clone();
+            let is_chromeless = is_chromeless.clone();
+            let star_color_rc = star_color_rc.clone();
+            let is_pinned = is_pinned.clone();
+
+            Rc::new(move |visible: bool| {
+                let title = title_entry.text().to_string();
+                let content = editor_ref.get_content();
+                let current_id = *note_id.borrow();
+                if current_id.is_none() && title == "New Tangle" && content.is_empty() {
+                    return;
+                }
+                let mut save_note = (*note_template).clone();
+                save_note.id = current_id;
+                save_note.title = title;
+                save_note.content = content;
+                save_note.updated_at = chrono::Utc::now().to_rfc3339();
+                let (gx, gy, gw, gh) = *cached_geo.lock().unwrap();
+                save_note.position_x = gx as f64;
+                save_note.position_y = gy as f64;
+                if gw > 0 { save_note.width = gw; }
+                if gh > 0 { save_note.height = gh; }
+                save_note.theme_bg = theme_bg.borrow().clone();
+                save_note.theme_fg = theme_fg.borrow().clone();
+                save_note.theme_accent = theme_accent.borrow().clone();
+                save_note.custom_colors = custom_colors.borrow().clone();
+                save_note.chromeless = *is_chromeless.borrow();
+                save_note.star_color = star_color_rc.borrow().clone();
+                save_note.always_on_top = *is_pinned.borrow();
+                save_note.is_visible = visible;
+                if current_id.is_some() {
+                    if let Err(e) = db.update_note(&save_note) {
+                        eprintln!("Error updating note: {}", e);
+                    }
+                } else if let Err(e) = db.create_note(&save_note) {
+                    eprintln!("Error creating note: {}", e);
+                }
+            })
+        };
+
+        // Close — save synchronously with is_visible=false
+        let do_sync_close = do_save_sync.clone();
+        let cached_geo_btn = cached_geo.clone();
         let window_for_close = window.clone();
         close_btn.connect_clicked(move |_| {
-            do_save_close(); // save while window is still visible/mapped
+            // Snapshot geometry before close
+            if let Some(title) = window_for_close.title() {
+                if let Some(geo) = query_wmctrl_geometry(&title.to_string()) {
+                    *cached_geo_btn.lock().unwrap() = geo;
+                }
+            }
+            do_sync_close(false);
             window_for_close.close();
         });
 
-        let do_save_wm = do_save.clone();
+        let do_sync_wm = do_save_sync.clone();
         let cached_geo_close = cached_geo.clone();
         window.connect_close_request(move |win| {
             if win.is_visible() {
@@ -524,16 +622,19 @@ impl NoteWindow {
                         *cached_geo_close.lock().unwrap() = geo;
                     }
                 }
-                do_save_wm();
+                // If app is quitting, keep is_visible=true so notes reopen on next launch
+                let keep_visible = is_app_quitting();
+                do_sync_wm(keep_visible);
                 win.set_visible(false);
             }
             glib::Propagation::Proceed
         });
 
         // Always on top toggle
-        let is_pinned = Rc::new(RefCell::new(note.always_on_top));
         let window_for_pin = window.clone();
         let pin_btn_ref = always_on_top_btn.clone();
+        let is_pinned_pin = is_pinned.clone();
+        let do_save_pin = do_save.clone();
         if note.always_on_top {
             always_on_top_btn.add_css_class("pinned");
             // Apply on-top after the window is mapped
@@ -543,7 +644,7 @@ impl NoteWindow {
             });
         }
         always_on_top_btn.connect_clicked(move |_| {
-            let mut pinned = is_pinned.borrow_mut();
+            let mut pinned = is_pinned_pin.borrow_mut();
             *pinned = !*pinned;
             if *pinned {
                 pin_btn_ref.add_css_class("pinned");
@@ -552,9 +653,11 @@ impl NoteWindow {
                 pin_btn_ref.remove_css_class("pinned");
                 pin_btn_ref.set_tooltip_text(Some("Toggle Always on Top"));
             }
+            let above = *pinned;
+            drop(pinned);
+            do_save_pin();
             window_for_pin.present();
             let win = window_for_pin.clone();
-            let above = *pinned;
             glib::idle_add_local_once(move || {
                 set_window_above(&win, above);
             });
@@ -662,7 +765,7 @@ impl NoteWindow {
     }
 }
 
-fn editor_ref_buffer(window: &ApplicationWindow) -> Option<gtk4::TextBuffer> {
+pub fn editor_ref_buffer(window: &ApplicationWindow) -> Option<gtk4::TextBuffer> {
     // Walk the widget tree to find the TextView
     let main_box = window.child()?;
     let main_box = main_box.downcast::<gtk4::Box>().ok()?;
@@ -684,378 +787,6 @@ fn editor_ref_buffer(window: &ApplicationWindow) -> Option<gtk4::TextBuffer> {
         w = widget.next_sibling();
     }
     None
-}
-
-// ── Theme picker ───────────────────────────────────────────────────
-
-fn show_theme_picker(
-    relative_to: &Button,
-    theme_bg: &Rc<RefCell<Option<String>>>,
-    theme_fg: &Rc<RefCell<Option<String>>>,
-    theme_accent: &Rc<RefCell<Option<String>>>,
-    custom_colors: &Rc<RefCell<Option<String>>>,
-    provider: &gtk4::CssProvider,
-    note_class: &str,
-) -> gtk4::Popover {
-    let popover = gtk4::Popover::new();
-    popover.set_parent(relative_to);
-
-    let vbox = gtk4::Box::builder()
-        .orientation(gtk4::Orientation::Vertical)
-        .spacing(8)
-        .margin_top(8)
-        .margin_bottom(8)
-        .margin_start(8)
-        .margin_end(8)
-        .css_classes(["color-picker-popover"])
-        .build();
-
-    vbox.append(&Label::builder().label("Note Theme").css_classes(["dim-label"]).build());
-
-    let sections = [
-        ("Background", "bg"),
-        ("Text Color", "fg"),
-        ("Accent", "accent"),
-    ];
-
-    let bg_colors: &[&str] = &[
-        "#1a1a2e", "#16213e", "#1b1b2f", "#2d132c",
-        "#1e3a2f", "#2c2c2c", "#f5f0e1", "#fef9ef",
-        "#1c1c1c", "#0d1b2a",
-    ];
-    let fg_colors: &[&str] = &[
-        "#ffffff", "#e0e0e0", "#b0b0b0", "#f5f5dc",
-        "#a8dadc", "#fca311", "#1d1d1d", "#333333",
-        "#c8b6ff", "#90e0ef",
-    ];
-    let accent_colors: &[&str] = &[
-        "#b388ff", "#ff6b6b", "#4ecdc4", "#ffe66d",
-        "#7c4dff", "#ff9f1c", "#06d6a0", "#ef476f",
-        "#118ab2", "#e0aaff",
-    ];
-
-    // Parse existing custom colors
-    let custom_list: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(
-        custom_colors.borrow().as_deref().unwrap_or("").split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty() && s.starts_with('#'))
-            .collect()
-    ));
-
-    for (label, kind) in &sections {
-        vbox.append(&Label::builder().label(*label).xalign(0.0).build());
-
-        let colors = match *kind {
-            "bg" => bg_colors,
-            "fg" => fg_colors,
-            _ => accent_colors,
-        };
-
-        // Preset color grid
-        let flow = gtk4::FlowBox::builder()
-            .max_children_per_line(5)
-            .min_children_per_line(5)
-            .selection_mode(gtk4::SelectionMode::None)
-            .build();
-
-        for color in colors {
-            let btn = build_color_swatch_btn(color);
-
-            let tb = theme_bg.clone();
-            let tf = theme_fg.clone();
-            let ta = theme_accent.clone();
-            let tp = provider.clone();
-            let nc = note_class.to_string();
-            let k = kind.to_string();
-            let cv = color.to_string();
-            btn.connect_clicked(move |_| {
-                match k.as_str() {
-                    "bg" => *tb.borrow_mut() = Some(cv.clone()),
-                    "fg" => *tf.borrow_mut() = Some(cv.clone()),
-                    "accent" => *ta.borrow_mut() = Some(cv.clone()),
-                    _ => {}
-                }
-                apply_note_theme(&tp, &nc, &tb.borrow(), &tf.borrow(), &ta.borrow());
-            });
-
-            flow.insert(&btn, -1);
-        }
-
-        vbox.append(&flow);
-
-        // Custom colors row
-        let custom_flow = gtk4::FlowBox::builder()
-            .max_children_per_line(6)
-            .min_children_per_line(1)
-            .selection_mode(gtk4::SelectionMode::None)
-            .build();
-
-        // Populate existing custom swatches (left-click applies, right-click removes)
-        for color in custom_list.borrow().iter() {
-            add_custom_swatch_to_flow(
-                &custom_flow, color, kind, theme_bg, theme_fg, theme_accent,
-                provider, note_class, &custom_list, custom_colors,
-            );
-        }
-
-        // Hex entry + "Add" button for custom colors
-        let hex_box = gtk4::Box::builder()
-            .orientation(gtk4::Orientation::Horizontal)
-            .spacing(4)
-            .build();
-
-        let hex_entry = gtk4::Entry::builder()
-            .placeholder_text("#rrggbb")
-            .max_width_chars(9)
-            .width_chars(9)
-            .build();
-
-        let add_btn = Button::builder()
-            .label("+")
-            .tooltip_text("Add custom color")
-            .build();
-
-        let tb = theme_bg.clone();
-        let tf = theme_fg.clone();
-        let ta = theme_accent.clone();
-        let tp = provider.clone();
-        let nc = note_class.to_string();
-        let k = kind.to_string();
-        let cc = custom_colors.clone();
-        let cl = custom_list.clone();
-        let cf = custom_flow.clone();
-        let he = hex_entry.clone();
-        add_btn.connect_clicked(move |_| {
-            let mut hex = he.text().to_string().trim().to_lowercase();
-            if !hex.starts_with('#') {
-                hex = format!("#{}", hex);
-            }
-            // Validate: must be #rrggbb
-            if hex.len() != 7 || !hex[1..].chars().all(|c| c.is_ascii_hexdigit()) {
-                return;
-            }
-
-            // Add to custom list if not duplicate
-            {
-                let mut list = cl.borrow_mut();
-                if !list.contains(&hex) {
-                    list.push(hex.clone());
-                }
-                *cc.borrow_mut() = if list.is_empty() {
-                    None
-                } else {
-                    Some(list.join(","))
-                };
-            }
-
-            // Add swatch to flow
-            add_custom_swatch_to_flow(
-                &cf, &hex, &k, &tb, &tf, &ta,
-                &tp, &nc, &cl, &cc,
-            );
-
-            // Apply immediately
-            match k.as_str() {
-                "bg" => *tb.borrow_mut() = Some(hex.clone()),
-                "fg" => *tf.borrow_mut() = Some(hex.clone()),
-                "accent" => *ta.borrow_mut() = Some(hex.clone()),
-                _ => {}
-            }
-            apply_note_theme(&tp, &nc, &tb.borrow(), &tf.borrow(), &ta.borrow());
-            he.set_text("");
-        });
-
-        hex_box.append(&hex_entry);
-        hex_box.append(&add_btn);
-
-        vbox.append(&custom_flow);
-        vbox.append(&hex_box);
-    }
-
-    // Reset button
-    let reset_btn = Button::builder().label("Reset to Default").build();
-    let tb = theme_bg.clone();
-    let tf = theme_fg.clone();
-    let ta = theme_accent.clone();
-    let cc = custom_colors.clone();
-    let cl = custom_list.clone();
-    let tp = provider.clone();
-    let pop = popover.clone();
-    reset_btn.connect_clicked(move |_| {
-        *tb.borrow_mut() = None;
-        *tf.borrow_mut() = None;
-        *ta.borrow_mut() = None;
-        *cc.borrow_mut() = None;
-        cl.borrow_mut().clear();
-        tp.load_from_data("");
-        pop.popdown();
-    });
-    vbox.append(&reset_btn);
-
-    popover.set_child(Some(&vbox));
-    // Don't popup() here — caller defers it via glib::idle_add_local_once
-    popover
-}
-
-fn build_color_swatch_btn(color: &str) -> Button {
-    let swatch = gtk4::DrawingArea::builder()
-        .width_request(28)
-        .height_request(28)
-        .build();
-    let c = color.to_string();
-    swatch.set_draw_func(move |_area, cr, w, h| {
-        let (r, g, b) = parse_hex(&c);
-        cr.set_source_rgba(r, g, b, 1.0);
-        cr.rectangle(0.0, 0.0, w as f64, h as f64);
-        let _ = cr.fill();
-        cr.set_source_rgba(1.0, 1.0, 1.0, 0.2);
-        cr.rectangle(0.5, 0.5, w as f64 - 1.0, h as f64 - 1.0);
-        cr.set_line_width(1.0);
-        let _ = cr.stroke();
-    });
-
-    Button::builder()
-        .child(&swatch)
-        .tooltip_text(color)
-        .css_classes(["color-swatch-btn"])
-        .build()
-}
-
-fn add_custom_swatch_to_flow(
-    flow: &gtk4::FlowBox,
-    color: &str,
-    kind: &str,
-    theme_bg: &Rc<RefCell<Option<String>>>,
-    theme_fg: &Rc<RefCell<Option<String>>>,
-    theme_accent: &Rc<RefCell<Option<String>>>,
-    provider: &gtk4::CssProvider,
-    note_class: &str,
-    custom_list: &Rc<RefCell<Vec<String>>>,
-    custom_colors: &Rc<RefCell<Option<String>>>,
-) {
-    let btn = build_color_swatch_btn(color);
-    btn.set_tooltip_text(Some(&format!("{} (right-click to remove)", color)));
-
-    // Left-click: apply color
-    let tb = theme_bg.clone();
-    let tf = theme_fg.clone();
-    let ta = theme_accent.clone();
-    let tp = provider.clone();
-    let nc = note_class.to_string();
-    let k = kind.to_string();
-    let cv = color.to_string();
-    btn.connect_clicked(move |_| {
-        match k.as_str() {
-            "bg" => *tb.borrow_mut() = Some(cv.clone()),
-            "fg" => *tf.borrow_mut() = Some(cv.clone()),
-            "accent" => *ta.borrow_mut() = Some(cv.clone()),
-            _ => {}
-        }
-        apply_note_theme(&tp, &nc, &tb.borrow(), &tf.borrow(), &ta.borrow());
-    });
-
-    // Right-click: remove from custom colors
-    let right_click = gtk4::GestureClick::builder().button(3).build();
-    let cl = custom_list.clone();
-    let cc = custom_colors.clone();
-    let cv = color.to_string();
-    let flow_ref = flow.clone();
-    right_click.connect_pressed(move |_, _, _, _| {
-        cl.borrow_mut().retain(|c| c != &cv);
-        *cc.borrow_mut() = {
-            let list = cl.borrow();
-            if list.is_empty() { None } else { Some(list.join(",")) }
-        };
-        // Remove the swatch widget from the flow
-        // Walk up from btn to the FlowBoxChild wrapper
-        let mut child = flow_ref.first_child();
-        while let Some(ref widget) = child {
-            if let Ok(fbc) = widget.clone().downcast::<gtk4::FlowBoxChild>() {
-                if let Some(inner_btn) = fbc.child() {
-                    if inner_btn.tooltip_text().map_or(false, |t| t.starts_with(&cv)) {
-                        flow_ref.remove(&fbc);
-                        return;
-                    }
-                }
-            }
-            child = widget.next_sibling();
-        }
-    });
-    btn.add_controller(right_click);
-
-    flow.insert(&btn, -1);
-}
-
-fn apply_note_theme(
-    provider: &gtk4::CssProvider,
-    note_class: &str,
-    bg: &Option<String>,
-    fg: &Option<String>,
-    accent: &Option<String>,
-) {
-    let nc = note_class;
-    let mut css = String::new();
-
-    // Determine fg_or_default for computing derived colors even with bg-only themes
-    let fg_or_default = fg.as_deref().unwrap_or("@theme_fg_color");
-
-    if let Some(bg_color) = bg {
-        css.push_str(&format!(
-            "window.{nc}.note-window {{ background-color: {bg}; }}\n\
-             window.{nc}.note-window box {{ background-color: transparent; }}\n\
-             window.{nc} .note-title-entry {{ background-color: alpha({bg}, 0.7); border-color: alpha({fg}, 0.12); }}\n\
-             window.{nc} .rich-toolbar {{ background-color: alpha({bg}, 0.85); }}\n\
-             window.{nc} .rich-toolbar button {{ background-color: alpha({fg}, 0.08); border-color: alpha({fg}, 0.06); }}\n\
-             window.{nc} textview.rich-editor text {{ background-color: alpha({fg}, 0.04); }}\n\
-             window.{nc} .content-frame {{ border-color: alpha({fg}, 0.08); background-color: transparent; }}\n\
-             window.{nc} .pin-button {{ background-color: alpha({fg}, 0.08); }}\n\
-             window.{nc} .palette-button {{ background-color: alpha({fg}, 0.08); }}\n\
-             window.{nc} .close-button {{ background-color: alpha({fg}, 0.08); }}\n\
-             window.{nc} .backlinks-pane {{ background-color: transparent; }}\n",
-            nc = nc, bg = bg_color, fg = fg_or_default
-        ));
-    }
-
-    if let Some(fg_color) = fg {
-        css.push_str(&format!(
-            "window.{nc} {{ color: {fg}; }}\n\
-             window.{nc} textview.rich-editor text {{ color: {fg}; }}\n\
-             window.{nc} .note-title-entry {{ color: {fg}; }}\n\
-             window.{nc} label {{ color: {fg}; }}\n\
-             window.{nc} button {{ color: {fg}; }}\n",
-            nc = nc, fg = fg_color
-        ));
-    }
-
-    if let Some(accent_color) = accent {
-        css.push_str(&format!(
-            "window.{nc} .note-title-entry:focus {{ border-color: {ac}; box-shadow: 0 0 0 2px alpha({ac}, 0.25); }}\n\
-             window.{nc} .pin-button.pinned {{ background-color: alpha({ac}, 0.3); border-color: {ac}; color: {ac}; }}\n\
-             window.{nc} .pin-button:hover {{ background-color: alpha({ac}, 0.2); }}\n\
-             window.{nc} .rich-toolbar button:hover {{ background-color: alpha({ac}, 0.15); }}\n\
-             window.{nc} .backlink-btn {{ color: {ac}; }}\n\
-             window.{nc} .backlink-btn:hover {{ background-color: alpha({ac}, 0.15); }}\n",
-            nc = nc, ac = accent_color,
-        ));
-    }
-
-    if css.is_empty() {
-        css.push_str("/* no theme */");
-    }
-
-    provider.load_from_data(&css);
-}
-
-fn parse_hex(hex: &str) -> (f64, f64, f64) {
-    let hex = hex.trim_start_matches('#');
-    if hex.len() >= 6 {
-        let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(128) as f64 / 255.0;
-        let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(128) as f64 / 255.0;
-        let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(128) as f64 / 255.0;
-        (r, g, b)
-    } else {
-        (0.5, 0.5, 0.5)
-    }
 }
 
 fn query_wmctrl_geometry(win_title: &str) -> Option<(i32, i32, i32, i32)> {

@@ -180,6 +180,24 @@ impl Database {
         Ok(())
     }
 
+    pub fn update_note_position(&self, id: i64, x: f64, y: f64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE notes SET position_x = ?1, position_y = ?2 WHERE id = ?3",
+            params![x, y, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn append_note_content(&self, id: i64, html: &str) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE notes SET content = content || ?1 WHERE id = ?2",
+            params![html, id],
+        )?;
+        Ok(())
+    }
+
     pub fn get_note(&self, id: i64) -> Result<Option<Note>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare_cached(
@@ -198,6 +216,16 @@ impl Database {
         let mut stmt = conn.prepare_cached(
             "SELECT id, title, content, created_at, updated_at, position_x, position_y, is_visible, always_on_top, width, height, theme_bg, theme_fg, theme_accent, custom_colors, chromeless, star_color
              FROM notes ORDER BY updated_at DESC"
+        )?;
+        let rows = stmt.query_map([], Self::row_to_note)?;
+        rows.collect()
+    }
+
+    pub fn get_visible_notes(&self) -> Result<Vec<Note>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, title, content, created_at, updated_at, position_x, position_y, is_visible, always_on_top, width, height, theme_bg, theme_fg, theme_accent, custom_colors, chromeless, star_color
+             FROM notes WHERE is_visible = 1"
         )?;
         let rows = stmt.query_map([], Self::row_to_note)?;
         rows.collect()

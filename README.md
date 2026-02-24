@@ -58,6 +58,30 @@ The binary is at `target/release/tangles`. Copy `assets/` alongside it or run fr
 cargo run --release
 ```
 
+## Compositor Shadow
+
+Most compositors add a drop shadow to all windows, which looks odd on the floating brain icon. Below are fixes for common setups (current as of 2026-02-24 — if your compositor isn't listed or these no longer apply, research a per-window shadow exclusion rule for your setup).
+
+**Picom / Compton** (i3, Openbox, bspwm, etc.) — add to `~/.config/picom.conf`:
+
+```
+rules: ({
+  ...
+}, {
+  match = "class_g = 'tangles'";
+  shadow = false;
+})
+```
+Reload: `killall -USR1 picom`
+
+**Hyprland** — add to `~/.config/hypr/hyprland.conf`:
+
+```
+windowrulev2 = noshadow, class:^(tangles)$
+```
+
+**KWin (KDE Plasma)** — System Settings > Window Management > Window Rules > Add New > set window class to `tangles`, add "No Shadow" property set to "Force Yes".
+
 ## Architecture
 
 | File | Purpose |

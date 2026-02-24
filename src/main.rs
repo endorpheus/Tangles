@@ -204,6 +204,18 @@ fn build_ui(app: &Application) {
 
     window.present();
 
+    // Restore previously-open notes
+    let app_restore = app.clone();
+    let db_restore = db.clone();
+    glib::idle_add_local_once(move || {
+        if let Ok(notes) = db_restore.get_visible_notes() {
+            for note in notes {
+                let nw = note_window::NoteWindow::new(&app_restore, db_restore.clone(), Some(note));
+                nw.present();
+            }
+        }
+    });
+
     // Periodic icon position save (background thread — no UI blocking)
     let db_for_periodic = db.clone();
     let win_for_periodic = window.clone();
@@ -522,7 +534,11 @@ fn register_actions(app: &Application, window: &ApplicationWindow, db: &database
     let db_for_theme = db.clone();
     let win_for_theme = window.clone();
     theme_settings_action.connect_activate(move |_, _| {
-        crate::theme::show_global_theme_dialog(&win_for_theme, &db_for_theme);
+        let win = crate::theme::show_theme_editor(
+            &win_for_theme,
+            crate::theme::ThemeTarget::Global { db: db_for_theme.clone() },
+        );
+        win.present();
     });
     app.add_action(&theme_settings_action);
 
@@ -540,6 +556,7 @@ fn register_actions(app: &Application, window: &ApplicationWindow, db: &database
     let quit_action = gio::SimpleAction::new("quit", None);
     let app_clone = app.clone();
     quit_action.connect_activate(move |_, _| {
+        note_window::set_app_quitting(true);
         app_clone.quit();
     });
     app.add_action(&quit_action);
@@ -616,6 +633,15 @@ fn show_note_list_dialog(
     let dialog_clone = dialog.clone();
     list_box.connect_row_activated(move |_, row| {
         if let Some(note_id) = get_note_id_from_row(row) {
+            // Check if a window for this note is already open
+            let target_class = format!("note-{}", note_id);
+            for win in app_clone.windows() {
+                if win.css_classes().iter().any(|c| c == &target_class) {
+                    win.present();
+                    dialog_clone.close();
+                    return;
+                }
+            }
             if let Ok(Some(note)) = db_clone.get_note(note_id) {
                 let nw = note_window::NoteWindow::new(&app_clone, db_clone.clone(), Some(note));
                 nw.present();

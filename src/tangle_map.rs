@@ -34,7 +34,7 @@ pub fn show_tangle_map(app: &gtk4::Application, parent: &ApplicationWindow, db: 
 
     // Extract graph data from DB
     let all_notes = db.get_all_notes().unwrap_or_default();
-    let tangle_re = regex::Regex::new(r#"tangle://([^"<\s]+)"#).unwrap();
+    let tangle_re = regex::Regex::new(r#"tangle://([^"<]+)"#).unwrap();
 
     let mut title_to_idx: HashMap<String, usize> = HashMap::new();
     let mut nodes: Vec<MapNode> = Vec::new();
@@ -256,7 +256,12 @@ pub fn show_tangle_map(app: &gtk4::Application, parent: &ApplicationWindow, db: 
                 cr.set_source_rgba(0.88, 0.88, 0.88, 1.0);
             }
             cr.set_font_size(11.0);
-            cr.move_to(x + 10.0, y + nh / 2.0 + 4.0);
+            let (text_x, text_y) = if let Ok(extents) = cr.text_extents(&node.title) {
+                (x + (nw - extents.width()) / 2.0, y + nh / 2.0 + extents.height() / 2.0)
+            } else {
+                (x + 10.0, y + nh / 2.0 + 4.0)
+            };
+            cr.move_to(text_x, text_y);
             let _ = cr.show_text(&node.title);
         }
         drop(sel);
@@ -377,6 +382,7 @@ pub fn show_tangle_map(app: &gtk4::Application, parent: &ApplicationWindow, db: 
     let pan_lde_x = pan_x.clone();
     let pan_lde_y = pan_y.clone();
     let db_link = db.clone();
+    let app_link = app.clone();
     let da_lde = drawing_area.clone();
     link_drag_ctrl.connect_drag_end(move |_, ox, oy| {
         let src_idx = match ld_src_e.get() {
@@ -409,14 +415,54 @@ pub fn show_tangle_map(app: &gtk4::Application, parent: &ApplicationWindow, db: 
                 // Add visual edge
                 edges_lde.borrow_mut().push(MapEdge { source: src_idx, target: i });
 
-                // Append tangle:// link to source note's content in DB
-                if let Ok(Some(mut note)) = db_link.get_note_by_title(&src_title) {
-                    let link_html = format!(
-                        "<p><a href=\"tangle://{}\">{}</a></p>",
-                        tgt_title, tgt_title
-                    );
-                    note.content.push_str(&link_html);
-                    let _ = db_link.update_note(&note);
+                // Append tangle link — inject into open editor if possible,
+                // otherwise write directly to DB.
+                let mut injected = false;
+                if let Ok(Some(note)) = db_link.get_note_by_title(&src_title) {
+                    if let Some(note_id) = note.id {
+                        let target_class = format!("note-{}", note_id);
+                        for win in app_link.windows() {
+                            if win.css_classes().iter().any(|c| c == &target_class) {
+                                if let Ok(app_win) = win.downcast::<gtk4::ApplicationWindow>() {
+                                    if let Some(buf) = crate::note_window::editor_ref_buffer(&app_win) {
+                                        let mut end_iter = buf.end_iter();
+                                        let offset = end_iter.offset();
+                                        buf.insert(&mut end_iter, &format!("\n{}", &tgt_title));
+                                        let start = buf.iter_at_offset(offset + 1); // after \n
+                                        let end = buf.end_iter();
+                                        let tag_name = format!("link::tangle://{}", tgt_title);
+                                        let tag = if let Some(t) = buf.tag_table().lookup(&tag_name) {
+                                            t
+                                        } else {
+                                            let t = gtk4::TextTag::builder()
+                                                .name(&tag_name)
+                                                .foreground("#b388ff")
+                                                .underline(gtk4::pango::Underline::Single)
+                                                .style(gtk4::pango::Style::Italic)
+                                                .build();
+                                            buf.tag_table().add(&t);
+                                            t
+                                        };
+                                        buf.apply_tag(&tag, &start, &end);
+                                        injected = true;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    // Fallback: no open editor window, append to content directly
+                    if !injected {
+                        if let Some(note_id) = note.id {
+                            let link_html = format!(
+                                "\n<p><a href=\"tangle://{}\" class=\"tangle\">{}</a></p>",
+                                tgt_title, tgt_title
+                            );
+                            if let Err(e) = db_link.append_note_content(note_id, &link_html) {
+                                eprintln!("Error saving tangle link: {}", e);
+                            }
+                        }
+                    }
                 }
 
                 da_lde.queue_draw();
@@ -428,7 +474,7 @@ pub fn show_tangle_map(app: &gtk4::Application, parent: &ApplicationWindow, db: 
     });
     drawing_area.add_controller(link_drag_ctrl);
 
-    // Shift+Drag → move node (or selected group)
+    // Left-drag on node → move node (or selected group); on empty space → pan handled below
     let node_drag_ctrl = gtk4::GestureDrag::builder().button(1).build();
     let dragged_node: Rc<Cell<Option<usize>>> = Rc::new(Cell::new(None));
     // Store initial positions of all nodes being moved: Vec<(index, start_x, start_y)>
@@ -441,13 +487,7 @@ pub fn show_tangle_map(app: &gtk4::Application, parent: &ApplicationWindow, db: 
     let pan_nd_x = pan_x.clone();
     let pan_nd_y = pan_y.clone();
     let sel_nd = selected_nodes.clone();
-    node_drag_ctrl.connect_drag_begin(move |gesture, x, y| {
-        let state = gesture.current_event_state();
-        if !state.contains(gtk4::gdk::ModifierType::SHIFT_MASK) {
-            dn_begin.set(None);
-            dsp_begin.borrow_mut().clear();
-            return;
-        }
+    node_drag_ctrl.connect_drag_begin(move |_gesture, x, y| {
         let z = zoom_nd.get();
         if z == 0.0 { dn_begin.set(None); return; }
         let mx = (x - pan_nd_x.get()) / z;
@@ -504,7 +544,7 @@ pub fn show_tangle_map(app: &gtk4::Application, parent: &ApplicationWindow, db: 
     let nodes_save = nodes.clone();
     let db_save = db.clone();
     node_drag_ctrl.connect_drag_end(move |_, _, _| {
-        // Save all moved node positions to DB
+        // Save all moved node positions to DB (position-only update, won't clobber content)
         if dn_end.get().is_some() {
             let nodes = nodes_save.borrow();
             let starts = dsp_end.borrow();
@@ -517,10 +557,8 @@ pub fn show_tangle_map(app: &gtk4::Application, parent: &ApplicationWindow, db: 
             drop(starts);
             std::thread::spawn(move || {
                 for (id, x, y) in to_save {
-                    if let Ok(Some(mut note)) = db.get_note(id) {
-                        note.position_x = x;
-                        note.position_y = y;
-                        let _ = db.update_note(&note);
+                    if let Err(e) = db.update_note_position(id, x, y) {
+                        eprintln!("Error saving node position: {}", e);
                     }
                 }
             });
@@ -747,7 +785,7 @@ pub fn show_tangle_map(app: &gtk4::Application, parent: &ApplicationWindow, db: 
     });
 
     let hint_bar = gtk4::Label::builder()
-        .label("Drag: Pan   Scroll: Zoom to cursor   Ctrl+Click: Select   Shift+Alt+Drag: Lasso   Shift+Drag: Move   Right-Drag: Link   Dbl-click: Open")
+        .label("Drag node: Move   Drag empty: Pan   Scroll: Zoom   Ctrl+Click: Select   Shift+Alt+Drag: Lasso   Right-Drag: Link   Dbl-click: Open")
         .css_classes(["tangle-map-hints"])
         .xalign(0.5)
         .build();

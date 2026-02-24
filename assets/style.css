@@ -272,7 +272,7 @@ window.brain-window {
 
 /* Star indicator in list */
 .star-indicator {
-    font-size: 16px;
+    font-size: 20px;
 }
 
 /* Delete button in note list */
@@ -430,6 +430,21 @@ popover contents {
 .heading {
     font-size: 16px;
     font-weight: 700;
+}
+
+/* Color swatch buttons — compact */
+.color-swatch-btn {
+    padding: 2px;
+    margin: 1px;
+    min-width: 0;
+    min-height: 0;
+}
+
+.star-color-btn {
+    padding: 2px;
+    margin: 1px;
+    min-width: 0;
+    min-height: 0;
 }
 
 /* Tangle map bottom bar */

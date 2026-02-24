@@ -25,6 +25,7 @@ pub struct RichEditor {
     pub widget: Box,
     pub text_view: TextView,
     pub buffer: TextBuffer,
+    pub hamburger_btn: Button,
     source_view: TextView,
     source_buffer: TextBuffer,
     is_source_mode: Rc<Cell<bool>>,
@@ -250,7 +251,6 @@ impl RichEditor {
             .build();
         toolbar.insert(&source_toggle_btn, -1);
 
-        widget.append(&hamburger_btn);
         widget.append(&toolbar);
 
         // -- Text View --
@@ -628,6 +628,7 @@ impl RichEditor {
             widget,
             text_view,
             buffer,
+            hamburger_btn,
             source_view,
             source_buffer,
             is_source_mode,
